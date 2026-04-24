@@ -2,9 +2,12 @@ namespace LeadScoring.Api.Models;
 
 public enum EventType
 {
-    Open,
     EmailClick,
-    WebsiteActivity
+    WebsiteActivity,
+    BookDemo,
+    BlogPost,
+    PricingPage,
+    Signup,
 }
 
 public enum EventSource

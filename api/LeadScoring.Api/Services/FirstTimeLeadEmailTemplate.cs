@@ -4,10 +4,12 @@ public static class FirstTimeLeadEmailTemplate
 {
     public const string Subject = "Your hiring pipeline is leaking top talent";
 
-    public static string BuildHtml(string recipientEmail, string eventName)
+    public static string BuildHtml(string recipientEmail, string eventName, Guid? leadId = null)
     {
         var encodedEmail = Uri.EscapeDataString(recipientEmail);
         var encodedEvent = Uri.EscapeDataString(eventName);
+        var encodedLeadId = leadId.HasValue ? Uri.EscapeDataString(leadId.Value.ToString("D")) : string.Empty;
+        var leadIdQuery = leadId.HasValue ? $"&leadId={encodedLeadId}" : string.Empty;
 
         return $$"""
             <!DOCTYPE html>
@@ -44,7 +46,7 @@ public static class FirstTimeLeadEmailTemplate
                       </tr>
                       <tr>
                         <td align="center" style="padding-bottom:20px;">
-                          <a href="https://www.hiperbrains.com/book-demo/?event={{encodedEvent}}_primary&email={{encodedEmail}}" style="display:inline-block;background:#2de06a;color:#00233c;text-decoration:none;font-weight:700;padding:14px 34px;border-radius:8px;">BOOK A DEMO</a>
+                          <a href="http://localhost:5173/book-demo/?event={{encodedEvent}}_primary&email={{encodedEmail}}{{leadIdQuery}}" style="display:inline-block;background:#2de06a;color:#00233c;text-decoration:none;font-weight:700;padding:14px 34px;border-radius:8px;">BOOK A DEMO</a>
                         </td>
                       </tr>
                       <tr>
@@ -68,7 +70,7 @@ public static class FirstTimeLeadEmailTemplate
                       </tr>
                       <tr>
                         <td align="center" style="padding-bottom:20px;">
-                          <a href="https://www.hiperbrains.com/book-demo/?event={{encodedEvent}}_secondary&email={{encodedEmail}}" style="display:inline-block;background:#ffffff;color:#01273f;text-decoration:none;font-weight:700;padding:14px 28px;border-radius:8px;">BOOK YOUR FREE DEMO</a>
+                          <a href="http://localhost:5173/book-demo/?event={{encodedEvent}}_secondary&email={{encodedEmail}}{{leadIdQuery}}" style="display:inline-block;background:#ffffff;color:#01273f;text-decoration:none;font-weight:700;padding:14px 28px;border-radius:8px;">BOOK YOUR FREE DEMO</a>
                         </td>
                       </tr>
                       <tr>

@@ -24,7 +24,7 @@ public class LeadScoringService(LeadScoringDbContext db, IEmailService emailServ
         if (lead.Stage > previousStage)
         {
             var eventName = $"lead_stage_{lead.Stage.ToString().ToLowerInvariant()}";
-            var htmlBody = FirstTimeLeadEmailTemplate.BuildHtml(lead.Email, eventName);
+            var htmlBody = FirstTimeLeadEmailTemplate.BuildHtml(lead.Email, eventName, lead.Id);
             await emailService.SendAsync(lead.Email, FirstTimeLeadEmailTemplate.Subject, htmlBody);
         }
     }
@@ -48,7 +48,6 @@ public class LeadScoringService(LeadScoringDbContext db, IEmailService emailServ
     {
         lead.Score += eventType switch
         {
-            EventType.Open => 0,
             EventType.EmailClick => 10,
             EventType.WebsiteActivity => 20,
             _ => 0

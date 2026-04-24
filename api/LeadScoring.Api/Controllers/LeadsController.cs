@@ -84,15 +84,17 @@ public class LeadsController(
         var baseUrl = $"{Request.Scheme}://{Request.Host}";
         var encodedToken = Uri.EscapeDataString(token);
         var encodedEmail = Uri.EscapeDataString(lead.Email);
+        var encodedLeadId = Uri.EscapeDataString(lead.Id.ToString("D"));
 
-        var primaryRedirect = $"https://www.hiperbrains.com/book-demo/?event=book_demo_primary&email={encodedEmail}";
-        var secondaryRedirect = $"https://www.hiperbrains.com/book-demo/?event=book_demo_secondary&email={encodedEmail}";
+        const string frontendBaseUrl = "http://localhost:5173";
+        var primaryRedirect = $"{frontendBaseUrl}/book-demo/?event=book_demo_primary&email={encodedEmail}&leadId={encodedLeadId}";
+        var secondaryRedirect = $"{frontendBaseUrl}/book-demo/?event=book_demo_secondary&email={encodedEmail}&leadId={encodedLeadId}";
         var trackedPrimary = $"{baseUrl}/track/click?token={encodedToken}&redirect={Uri.EscapeDataString(primaryRedirect)}";
         var trackedSecondary = $"{baseUrl}/track/click?token={encodedToken}&redirect={Uri.EscapeDataString(secondaryRedirect)}";
         var openPixel = $"{baseUrl}/track/open?token={encodedToken}";
 
         var htmlBody = FirstTimeLeadEmailTemplate
-            .BuildHtml(lead.Email, "book_demo")
+            .BuildHtml(lead.Email, "book_demo", lead.Id)
             .Replace(primaryRedirect, trackedPrimary, StringComparison.Ordinal)
             .Replace(secondaryRedirect, trackedSecondary, StringComparison.Ordinal);
 

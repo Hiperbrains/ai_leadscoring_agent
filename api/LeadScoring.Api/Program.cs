@@ -14,7 +14,15 @@ builder.Services.AddDbContext<LeadScoringDbContext>(opt =>
 builder.Services.AddScoped<TokenService>();
 builder.Services.AddScoped<LeadScoringService>();
 builder.Services.AddScoped<LeadImportService>();
-builder.Services.AddScoped<IEmailService, SmtpEmailService>();
+var disableEmailSending = builder.Configuration.GetValue<bool>("Email:DisableSending");
+if (disableEmailSending)
+{
+    builder.Services.AddScoped<IEmailService, ConsoleEmailService>();
+}
+else
+{
+    builder.Services.AddScoped<IEmailService, SmtpEmailService>();
+}
 builder.Services.AddHostedService<InactivityWorker>();
 builder.Services.AddCors(opt =>
 {
