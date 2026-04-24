@@ -1,0 +1,115 @@
+<main class="container">
+  <header class="topbar">
+    <div>
+      <h1>Lead Scoring Dashboard</h1>
+      <p class="subtitle">Track leads, import HubSpot exports, and monitor stage movement.</p>
+    </div>
+    <div class="row actions">
+      <button (click)="loadDashboard()">Refresh</button>
+      <button (click)="downloadPdfReport()">Download PDF Report</button>
+    </div>
+  </header>
+
+  <section class="panel">
+    <h2>Connect API</h2>
+    <div class="row">
+      <label for="apiBase">API Base URL</label>
+      <input id="apiBase" [(ngModel)]="apiBase" placeholder="http://localhost:5221" />
+      <button (click)="loadDashboard()">Reconnect</button>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Import Leads (CSV or XLSX)</h2>
+    <div class="row">
+      <label for="source">Source</label>
+      <input id="source" [(ngModel)]="source" placeholder="hubspot" />
+      <input type="file" (change)="onFileSelected($event)" accept=".csv,.xlsx" />
+      <button (click)="importLeads()" [disabled]="importing">{{ importing ? 'Importing...' : 'Import' }}</button>
+    </div>
+    <p class="status success" *ngIf="importMessage">{{ importMessage }}</p>
+    <p class="status error" *ngIf="importError">{{ importError }}</p>
+  </section>
+
+  <section class="status" *ngIf="loading">Loading dashboard...</section>
+  <section class="status error" *ngIf="error">{{ error }}</section>
+
+  <section *ngIf="data && !loading">
+    <div class="cards">
+      <article class="card">
+        <h3>Total Leads</h3>
+        <p>{{ data.totalLeads | number }}</p>
+      </article>
+      <article class="card">
+        <h3>Cold</h3>
+        <p>{{ data.stageCounts.Cold || 0 }}</p>
+      </article>
+      <article class="card">
+        <h3>Warm</h3>
+        <p>{{ data.stageCounts.Warm || 0 }}</p>
+      </article>
+      <article class="card">
+        <h3>MQL</h3>
+        <p>{{ data.stageCounts.Mql || 0 }}</p>
+      </article>
+      <article class="card">
+        <h3>Hot</h3>
+        <p>{{ data.stageCounts.Hot || 0 }}</p>
+      </article>
+    </div>
+
+    <h2 class="section-title">Event Volume</h2>
+    <div class="cards">
+      <article class="card">
+        <h3>Opens</h3>
+        <p>{{ data.eventsByType.Open || 0 }}</p>
+      </article>
+      <article class="card">
+        <h3>Email Clicks</h3>
+        <p>{{ data.eventsByType.EmailClick || 0 }}</p>
+      </article>
+      <article class="card">
+        <h3>Website Activity</h3>
+        <p>{{ data.eventsByType.WebsiteActivity || 0 }}</p>
+      </article>
+    </div>
+
+    <h2 class="section-title">Leads</h2>
+    <div class="pagination-bar">
+      <div class="row">
+        <label for="pageSize">Rows per page</label>
+        <select id="pageSize" [(ngModel)]="pageSize" (change)="onPageSizeChange()">
+          <option [ngValue]="10">10</option>
+          <option [ngValue]="25">25</option>
+          <option [ngValue]="50">50</option>
+        </select>
+      </div>
+      <div class="row">
+        <button (click)="previousPage()" [disabled]="currentPage === 1">Previous</button>
+        <span class="page-indicator">Page {{ currentPage }} of {{ totalPages }}</span>
+        <button (click)="nextPage()" [disabled]="currentPage === totalPages">Next</button>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+      <thead>
+        <tr>
+          <th>Email</th>
+          <th>Score</th>
+          <th>Stage</th>
+          <th>Last Activity</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr *ngFor="let lead of paginatedLeads">
+          <td>{{ lead.email }}</td>
+          <td>{{ lead.score }}</td>
+          <td [ngClass]="getStageClass(lead.stage)">{{ lead.stage }}</td>
+          <td>{{ lead.lastActivityUtc | date: 'short' }}</td>
+        </tr>
+      </tbody>
+      </table>
+    </div>
+    <p class="status">Showing {{ paginatedLeads.length }} of {{ totalLeads }} leads</p>
+  </section>
+</main>

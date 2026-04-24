@@ -1,0 +1,14 @@
+namespace LeadScoring.Api.Models;
+
+public class Lead
+{
+    public Guid Id { get; set; }
+    public string Email { get; set; } = string.Empty;
+    public string? FirstName { get; set; }
+    public string? LastName { get; set; }
+    public int Score { get; set; }
+    public LeadStage Stage { get; set; } = LeadStage.Cold;
+    public DateTime CreatedAtUtc { get; set; }
+    public DateTime LastActivityUtc { get; set; }
+    public DateTime? LastScoredAtUtc { get; set; }
+}
