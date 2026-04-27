@@ -12,11 +12,11 @@ public class InactivityWorker(IServiceScopeFactory scopeFactory, ILogger<Inactiv
             {
                 using var scope = scopeFactory.CreateScope();
                 var scoring = scope.ServiceProvider.GetRequiredService<LeadScoringService>();
-                await scoring.ReScoreInactiveLeadsAsync(TimeSpan.FromHours(1));
+                await scoring.CheckFirstEmailScoreUpdateAsync(TimeSpan.FromHours(1));
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Inactivity scoring worker failed.");
+                logger.LogError(ex, "Hourly score-check worker failed.");
             }
 
             await Task.Delay(TimeSpan.FromMinutes(60), stoppingToken);

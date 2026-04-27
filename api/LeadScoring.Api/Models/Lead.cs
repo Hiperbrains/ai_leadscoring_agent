@@ -6,6 +6,8 @@ public class Lead
     public string Email { get; set; } = string.Empty;
     public string? FirstName { get; set; }
     public string? LastName { get; set; }
+    public int? ProductId { get; set; }
+    public bool WelcomeEmailSent { get; set; }
     public int Score { get; set; }
     public LeadStage Stage { get; set; } = LeadStage.Cold;
     public DateTime CreatedAtUtc { get; set; }

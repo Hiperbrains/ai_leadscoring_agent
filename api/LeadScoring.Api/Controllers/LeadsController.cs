@@ -95,6 +95,17 @@ public class LeadsController(
         var htmlBody = ResolveTemplate(template.EmailBodyHtml, lead, eventName, template.IsTrackingEnabled);
 
         await emailService.SendAsync(lead.Email, template.Subject, htmlBody);
+        lead.WelcomeEmailSent = true;
+        db.Events.Add(new LeadEvent
+        {
+            Id = Guid.NewGuid(),
+            LeadId = lead.Id,
+            Type = EventType.WebsiteActivity,
+            Source = EventSource.Email,
+            TimestampUtc = DateTime.UtcNow,
+            MetadataJson = $$"""{"eventName":"welcome_email","systemMarker":"WelcomeEmailSent"}"""
+        });
+        await db.SaveChangesAsync();
 
         return Ok(new
         {

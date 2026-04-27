@@ -7,7 +7,7 @@ public enum EventType
     BookDemo,
     BlogPost,
     PricingPage,
-    Signup,
+    Signup
 }
 
 public enum EventSource

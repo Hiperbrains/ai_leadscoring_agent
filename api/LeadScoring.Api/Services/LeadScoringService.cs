@@ -1,6 +1,7 @@
 using LeadScoring.Api.Data;
 using LeadScoring.Api.Models;
 using System.Net;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 
 namespace LeadScoring.Api.Services;
@@ -18,8 +19,14 @@ public class LeadScoringService(LeadScoringDbContext db, IEmailService emailServ
         var previousStage = lead.Stage;
         db.Events.Add(leadEvent);
         lead.LastActivityUtc = leadEvent.TimestampUtc;
-        ApplyScore(lead, leadEvent.Type);
-        lead.LastScoredAtUtc = DateTime.UtcNow;
+        var scoreDelta = await GetScoreDeltaAsync(lead, leadEvent);
+        if (scoreDelta > 0)
+        {
+            lead.Score += scoreDelta;
+            lead.Stage = ResolveStage(lead.Score);
+            lead.LastScoredAtUtc = DateTime.UtcNow;
+        }
+
         await db.SaveChangesAsync();
 
         if (lead.Stage > previousStage)
@@ -28,37 +35,210 @@ public class LeadScoringService(LeadScoringDbContext db, IEmailService emailServ
         }
     }
 
-    public async Task ReScoreInactiveLeadsAsync(TimeSpan inactivityThreshold)
+    public async Task CheckFirstEmailScoreUpdateAsync(TimeSpan scoreCheckDelay)
     {
-        var threshold = DateTime.UtcNow.Subtract(inactivityThreshold);
-        var staleLeads = await db.Leads
-            .Where(l => l.LastActivityUtc <= threshold)
+        var threshold = DateTime.UtcNow.Subtract(scoreCheckDelay);
+        var firstEmailEvents = await db.Events
+            .Where(e =>
+                e.TimestampUtc <= threshold &&
+                e.MetadataJson != null &&
+                e.MetadataJson.Contains("\"systemMarker\":\"WelcomeEmailSent\""))
             .ToListAsync();
 
-        foreach (var lead in staleLeads)
+        if (firstEmailEvents.Count == 0)
         {
-            lead.LastScoredAtUtc = DateTime.UtcNow;
+            return;
+        }
+
+        var latestFirstEmails = firstEmailEvents
+            .GroupBy(e => e.LeadId)
+            .Select(g => g.OrderByDescending(x => x.TimestampUtc).First())
+            .ToList();
+
+        var leadIds = latestFirstEmails.Select(x => x.LeadId).Distinct().ToList();
+        var checks = await db.Events
+            .Where(e =>
+                leadIds.Contains(e.LeadId) &&
+                e.MetadataJson != null &&
+                e.MetadataJson.Contains("\"systemMarker\":\"FirstEmailScoreChecked\""))
+            .ToListAsync();
+
+        foreach (var sentEvent in latestFirstEmails)
+        {
+            var alreadyChecked = checks.Any(c => c.LeadId == sentEvent.LeadId && c.TimestampUtc >= sentEvent.TimestampUtc);
+            if (alreadyChecked)
+            {
+                continue;
+            }
+
+            var lead = await db.Leads.FindAsync(sentEvent.LeadId);
+            if (lead is null)
+            {
+                continue;
+            }
+
+            var scoreUpdated = await HasScoringEventAfterAsync(lead, sentEvent.TimestampUtc);
+
+            db.Events.Add(new LeadEvent
+            {
+                Id = Guid.NewGuid(),
+                LeadId = lead.Id,
+                Type = EventType.WebsiteActivity,
+                Source = EventSource.Email,
+                TimestampUtc = DateTime.UtcNow,
+                MetadataJson = $$"""{"scoreUpdated":{{scoreUpdated.ToString().ToLowerInvariant()}},"firstEmailSentAt":"{{sentEvent.TimestampUtc:O}}","systemMarker":"FirstEmailScoreChecked"}"""
+            });
         }
 
         await db.SaveChangesAsync();
     }
 
-    private static void ApplyScore(Lead lead, EventType eventType)
+    private static LeadStage ResolveStage(int score)
     {
-        lead.Score += eventType switch
-        {
-            EventType.EmailClick => 10,
-            EventType.WebsiteActivity => 20,
-            _ => 0
-        };
-
-        lead.Stage = lead.Score switch
+        return score switch
         {
             <= 30 => LeadStage.Cold,
             <= 60 => LeadStage.Warm,
             <= 99 => LeadStage.Mql,
             _ => LeadStage.Hot
         };
+    }
+
+    private async Task<int> GetScoreDeltaAsync(Lead lead, LeadEvent leadEvent)
+    {
+        if (!lead.ProductId.HasValue)
+        {
+            return 0;
+        }
+
+        var productConfig = await db.CompanyProductConfigs
+            .Where(x => x.ProductId == lead.ProductId.Value)
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .FirstOrDefaultAsync();
+        if (productConfig is null)
+        {
+            return 0;
+        }
+
+        var normalizedEventKey = NormalizeEventKey(ResolveEventKey(leadEvent));
+        if (string.IsNullOrWhiteSpace(normalizedEventKey))
+        {
+            return 0;
+        }
+
+        foreach (var (configKey, score) in ParseConfig(productConfig.ProductEventConfigJson))
+        {
+            if (NormalizeEventKey(configKey) == normalizedEventKey)
+            {
+                return score;
+            }
+        }
+
+        return 0;
+    }
+
+    private async Task<bool> HasScoringEventAfterAsync(Lead lead, DateTime sinceUtc)
+    {
+        var events = await db.Events
+            .Where(e => e.LeadId == lead.Id && e.TimestampUtc > sinceUtc)
+            .ToListAsync();
+
+        foreach (var evt in events)
+        {
+            var delta = await GetScoreDeltaAsync(lead, evt);
+            if (delta > 0)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static IEnumerable<KeyValuePair<string, int>> ParseConfig(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            yield break;
+        }
+
+        JsonDocument? doc = null;
+        try
+        {
+            doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                yield break;
+            }
+
+            foreach (var prop in doc.RootElement.EnumerateObject())
+            {
+                var score = prop.Value.ValueKind switch
+                {
+                    JsonValueKind.Number when prop.Value.TryGetInt32(out var number) => number,
+                    JsonValueKind.String when int.TryParse(prop.Value.GetString(), out var parsed) => parsed,
+                    _ => 0
+                };
+
+                yield return new KeyValuePair<string, int>(prop.Name, score);
+            }
+        }
+        finally
+        {
+            doc?.Dispose();
+        }
+    }
+
+    private static string? ResolveEventKey(LeadEvent leadEvent)
+    {
+        if (!string.IsNullOrWhiteSpace(leadEvent.MetadataJson))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(leadEvent.MetadataJson);
+                if (doc.RootElement.ValueKind == JsonValueKind.Object)
+                {
+                    if (doc.RootElement.TryGetProperty("eventName", out var eventName) && eventName.ValueKind == JsonValueKind.String)
+                    {
+                        return eventName.GetString();
+                    }
+
+                    if (doc.RootElement.TryGetProperty("eventType", out var eventType) && eventType.ValueKind == JsonValueKind.String)
+                    {
+                        return eventType.GetString();
+                    }
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        return leadEvent.Type switch
+        {
+            EventType.BookDemo => "Book demo",
+            EventType.Signup => "Signup",
+            EventType.BlogPost => "Blogs",
+            EventType.PricingPage => "Pricing page",
+            EventType.EmailClick => "Email click",
+            EventType.WebsiteActivity => "Website activity",
+            _ => leadEvent.Type.ToString()
+        };
+    }
+
+    private static string NormalizeEventKey(string? eventKey)
+    {
+        if (string.IsNullOrWhiteSpace(eventKey))
+        {
+            return string.Empty;
+        }
+
+        var chars = eventKey
+            .Trim()
+            .ToLowerInvariant()
+            .Where(char.IsLetterOrDigit)
+            .ToArray();
+        return new string(chars);
     }
 
     private async Task SendStageEmailAsync(Lead lead)

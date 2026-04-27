@@ -1,4 +1,5 @@
 using LeadScoring.Api.Contracts;
+using System.Text.Json;
 using LeadScoring.Api.Models;
 using LeadScoring.Api.Services;
 using Microsoft.AspNetCore.Mvc;
@@ -40,7 +41,7 @@ public class TrackingController(
             Type = EventType.EmailClick,
             Source = EventSource.Email,
             TimestampUtc = DateTime.UtcNow,
-            MetadataJson = $$"""{"redirect":"{{redirect}}"}"""
+            MetadataJson = $$"""{"redirect":"{{redirect}}","eventName":"Email click"}"""
         });
 
         return Redirect(redirect);
@@ -50,6 +51,7 @@ public class TrackingController(
     public async Task<IActionResult> TrackEvent([FromBody] TrackEventRequest request)
     {
         var eventType = Enum.TryParse<EventType>(request.EventType, true, out var parsed) ? parsed : EventType.WebsiteActivity;
+        var metadataJson = MergeMetadata(request.MetadataJson, request.EventType);
 
         await scoringService.AddEventAsync(new LeadEvent
         {
@@ -58,9 +60,48 @@ public class TrackingController(
             Type = eventType,
             Source = EventSource.Website,
             TimestampUtc = DateTime.UtcNow,
-            MetadataJson = request.MetadataJson
+            MetadataJson = metadataJson
         });
 
         return Accepted();
+    }
+
+    private static string? MergeMetadata(string? metadataJson, string? eventType)
+    {
+        if (string.IsNullOrWhiteSpace(eventType))
+        {
+            return metadataJson;
+        }
+
+        if (string.IsNullOrWhiteSpace(metadataJson))
+        {
+            return $$"""{"eventName":"{{eventType}}"}""";
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(metadataJson);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return metadataJson;
+            }
+
+            var properties = new List<string>();
+            foreach (var property in doc.RootElement.EnumerateObject())
+            {
+                properties.Add($"\"{property.Name}\":{property.Value.GetRawText()}");
+            }
+
+            if (!doc.RootElement.TryGetProperty("eventName", out _))
+            {
+                properties.Add($"\"eventName\":\"{eventType}\"");
+            }
+
+            return $"{{{string.Join(",", properties)}}}";
+        }
+        catch
+        {
+            return metadataJson;
+        }
     }
 }
