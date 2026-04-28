@@ -2,6 +2,7 @@ using LeadScoring.Api.Background;
 using LeadScoring.Api.Data;
 using LeadScoring.Api.Services;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -9,8 +10,12 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddDbContext<LeadScoringDbContext>(opt =>
+{
     opt.UseNpgsql(builder.Configuration.GetConnectionString("Hiperbrains")
-                  ?? throw new InvalidOperationException("Connection string 'Hiperbrains' is missing.")));
+                   ?? throw new InvalidOperationException("Connection string 'Hiperbrains' is missing."));
+    opt.ConfigureWarnings(warnings =>
+        warnings.Ignore(RelationalEventId.PendingModelChangesWarning));
+});
 builder.Services.AddScoped<TokenService>();
 builder.Services.AddScoped<LeadScoringService>();
 builder.Services.AddScoped<LeadImportService>();
