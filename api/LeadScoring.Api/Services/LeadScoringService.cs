@@ -244,8 +244,9 @@ public class LeadScoringService(LeadScoringDbContext db, IEmailService emailServ
     private async Task SendStageEmailAsync(Lead lead)
     {
         var template = await db.EmailTemplates
-            .Where(t => t.IsActive && t.Stage == lead.Stage)
-            .OrderByDescending(t => t.UpdatedAt ?? t.CreatedAt)
+            .Where(t => t.IsActive && t.Stage == lead.Stage && (t.ProductId == lead.ProductId || t.ProductId == null))
+            .OrderByDescending(t => t.ProductId == lead.ProductId)
+            .ThenByDescending(t => t.UpdatedAt ?? t.CreatedAt)
             .FirstOrDefaultAsync();
 
         if (template is null)

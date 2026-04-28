@@ -3,6 +3,7 @@ using System;
 using LeadScoring.Api.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace LeadScoring.Api.Migrations
 {
     [DbContext(typeof(LeadScoringDbContext))]
-    partial class LeadScoringDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260428105756_AddProductScopedEmailTemplates")]
+    partial class AddProductScopedEmailTemplates
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -78,9 +81,6 @@ namespace LeadScoring.Api.Migrations
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
 
-                    b.Property<bool>("IsFollowUp")
-                        .HasColumnType("boolean");
-
                     b.Property<bool>("IsTrackingEnabled")
                         .HasColumnType("boolean");
 
@@ -103,7 +103,7 @@ namespace LeadScoring.Api.Migrations
 
                     b.HasKey("TemplateId");
 
-                    b.HasIndex("Stage", "ProductId", "IsFollowUp")
+                    b.HasIndex("Stage", "ProductId")
                         .IsUnique()
                         .HasFilter("\"IsActive\" = true");
 

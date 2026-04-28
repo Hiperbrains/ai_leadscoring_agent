@@ -17,7 +17,7 @@ public class LeadScoringDbContext(DbContextOptions<LeadScoringDbContext> options
         modelBuilder.Entity<CompanyProductConfig>().HasIndex(x => new { x.CompanyName, x.ProductName, x.ProductId }).IsUnique();
         modelBuilder.Entity<EmailTemplate>().HasKey(x => x.TemplateId);
         modelBuilder.Entity<EmailTemplate>()
-            .HasIndex(x => x.Stage)
+            .HasIndex(x => new { x.Stage, x.ProductId, x.IsFollowUp })
             .HasFilter("\"IsActive\" = true")
             .IsUnique();
     }
