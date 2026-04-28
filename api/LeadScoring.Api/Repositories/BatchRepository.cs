@@ -1,0 +1,67 @@
+using LeadScoring.Api.Data;
+using LeadScoring.Api.Models;
+using Microsoft.EntityFrameworkCore;
+
+namespace LeadScoring.Api.Repositories;
+
+public class BatchRepository(LeadScoringDbContext db) : IBatchRepository
+{
+    public Task<List<BatchConfig>> GetActiveConfigsAsync(CancellationToken cancellationToken)
+    {
+        return db.BatchConfigs
+            .AsNoTracking()
+            .Where(x => x.IsActive)
+            .ToListAsync(cancellationToken);
+    }
+
+    public Task<DateTime?> GetLastSuccessfulBatchEndTimeAsync(int productId, BatchType batchType, CancellationToken cancellationToken)
+    {
+        return db.Batches
+            .AsNoTracking()
+            .Where(x => x.ProductId == productId && x.BatchType == batchType && x.Status == BatchStatus.Completed && x.EndTime != null)
+            .OrderByDescending(x => x.EndTime)
+            .Select(x => x.EndTime)
+            .FirstOrDefaultAsync(cancellationToken);
+    }
+
+    public Task<Batch?> GetBatchByIdAsync(long batchId, CancellationToken cancellationToken)
+    {
+        return db.Batches
+            .Include(x => x.BatchLeads)
+            .FirstOrDefaultAsync(x => x.BatchId == batchId, cancellationToken);
+    }
+
+    public Task<List<Lead>> GetLeadsAfterAsync(int productId, DateTime sinceUtc, CancellationToken cancellationToken)
+    {
+        return db.Leads
+            .AsNoTracking()
+            .Where(x => x.ProductId == productId && x.CreatedAtUtc > sinceUtc)
+            .OrderBy(x => x.CreatedAtUtc)
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<Batch> CreateBatchAsync(Batch batch, CancellationToken cancellationToken)
+    {
+        await db.Batches.AddAsync(batch, cancellationToken);
+        await db.SaveChangesAsync(cancellationToken);
+        return batch;
+    }
+
+    public async Task CreateBatchLeadsAsync(IEnumerable<BatchLead> batchLeads, CancellationToken cancellationToken)
+    {
+        await db.BatchLeads.AddRangeAsync(batchLeads, cancellationToken);
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    public Task<List<BatchLead>> GetFailedBatchLeadsAsync(long batchId, CancellationToken cancellationToken)
+    {
+        return db.BatchLeads
+            .Where(x => x.BatchId == batchId && x.Status == BatchLeadStatus.Failed)
+            .ToListAsync(cancellationToken);
+    }
+
+    public Task SaveChangesAsync(CancellationToken cancellationToken)
+    {
+        return db.SaveChangesAsync(cancellationToken);
+    }
+}

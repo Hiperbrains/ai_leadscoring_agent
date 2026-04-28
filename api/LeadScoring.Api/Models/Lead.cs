@@ -13,4 +13,6 @@ public class Lead
     public DateTime CreatedAtUtc { get; set; }
     public DateTime LastActivityUtc { get; set; }
     public DateTime? LastScoredAtUtc { get; set; }
+
+    public ICollection<BatchLead> BatchLeads { get; set; } = new List<BatchLead>();
 }

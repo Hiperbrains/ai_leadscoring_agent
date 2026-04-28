@@ -9,6 +9,9 @@ public class LeadScoringDbContext(DbContextOptions<LeadScoringDbContext> options
     public DbSet<LeadEvent> Events => Set<LeadEvent>();
     public DbSet<CompanyProductConfig> CompanyProductConfigs => Set<CompanyProductConfig>();
     public DbSet<EmailTemplate> EmailTemplates => Set<EmailTemplate>();
+    public DbSet<BatchConfig> BatchConfigs => Set<BatchConfig>();
+    public DbSet<Batch> Batches => Set<Batch>();
+    public DbSet<BatchLead> BatchLeads => Set<BatchLead>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -20,5 +23,26 @@ public class LeadScoringDbContext(DbContextOptions<LeadScoringDbContext> options
             .HasIndex(x => new { x.Stage, x.ProductId, x.IsFollowUp })
             .HasFilter("\"IsActive\" = true")
             .IsUnique();
+
+        modelBuilder.Entity<BatchConfig>().HasKey(x => x.ConfigId);
+        modelBuilder.Entity<BatchConfig>().HasIndex(x => new { x.ProductId, x.IsActive });
+
+        modelBuilder.Entity<Batch>().HasKey(x => x.BatchId);
+        modelBuilder.Entity<Batch>().HasIndex(x => x.ProductId);
+        modelBuilder.Entity<Batch>().HasIndex(x => new { x.ProductId, x.BatchType, x.Status, x.EndTime });
+
+        modelBuilder.Entity<BatchLead>().HasKey(x => x.BatchLeadId);
+        modelBuilder.Entity<BatchLead>().HasIndex(x => x.BatchId);
+        modelBuilder.Entity<BatchLead>().HasIndex(x => x.LeadId);
+        modelBuilder.Entity<BatchLead>()
+            .HasOne(x => x.Batch)
+            .WithMany(x => x.BatchLeads)
+            .HasForeignKey(x => x.BatchId)
+            .OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<BatchLead>()
+            .HasOne(x => x.Lead)
+            .WithMany(x => x.BatchLeads)
+            .HasForeignKey(x => x.LeadId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }

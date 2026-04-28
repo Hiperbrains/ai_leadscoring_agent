@@ -1,5 +1,6 @@
 using LeadScoring.Api.Background;
 using LeadScoring.Api.Data;
+using LeadScoring.Api.Repositories;
 using LeadScoring.Api.Services;
 using System.Net;
 using Microsoft.EntityFrameworkCore;
@@ -20,6 +21,8 @@ builder.Services.AddDbContext<LeadScoringDbContext>(opt =>
 builder.Services.AddScoped<TokenService>();
 builder.Services.AddScoped<LeadScoringService>();
 builder.Services.AddScoped<LeadImportService>();
+builder.Services.AddScoped<IBatchRepository, BatchRepository>();
+builder.Services.AddScoped<IBatchProcessingService, BatchProcessingService>();
 var disableEmailSending = builder.Configuration.GetValue<bool>("Email:DisableSending");
 if (disableEmailSending)
 {
@@ -30,6 +33,7 @@ else
     builder.Services.AddScoped<IEmailService, SmtpEmailService>();
 }
 builder.Services.AddHostedService<InactivityWorker>();
+builder.Services.AddHostedService<BatchWorker>();
 var configuredCorsOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
 var allowedCorsOrigins = new HashSet<string>(configuredCorsOrigins, StringComparer.OrdinalIgnoreCase);
 builder.Services.AddCors(opt =>

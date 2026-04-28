@@ -23,3 +23,24 @@ public enum LeadStage
     Mql,
     Hot
 }
+
+public enum BatchType
+{
+    Daily,
+    Weekly,
+    Monthly
+}
+
+public enum BatchStatus
+{
+    Running,
+    Completed,
+    Failed
+}
+
+public enum BatchLeadStatus
+{
+    Pending,
+    Success,
+    Failed
+}
