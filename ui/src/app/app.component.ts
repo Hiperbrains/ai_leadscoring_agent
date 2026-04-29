@@ -362,6 +362,15 @@ interface DashboardLead {
   stage: StageName;
   lastActivityUtc: string;
   lastScoredAtUtc?: string | null;
+  lastEvent?: string | null;
+  lastEmailName?: string | null;
+  nextEmailName?: string | null;
+  nextDateTimeUtc?: string | null;
+  nextStage: StageName;
+  signupCompleted: boolean;
+  profileCompletion: boolean;
+  selectedPlan?: string | null;
+  planRenewalDate?: string | null;
 }
 
 interface DashboardResponse {

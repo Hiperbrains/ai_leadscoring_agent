@@ -125,6 +125,15 @@
               <th>Score</th>
               <th>Stage</th>
               <th>Last Activity</th>
+              <th>Last Event</th>
+              <th>Last Email Name</th>
+              <th>Next Email Name</th>
+              <th>Next Date & Time</th>
+              <th>Next Stage</th>
+              <th>Signup Completed</th>
+              <th>Profile Completion</th>
+              <th>Selected Plan</th>
+              <th>Plan Renewal Date</th>
             </tr>
           </thead>
           <tbody>
@@ -133,6 +142,15 @@
               <td>{{ lead.score }}</td>
               <td [ngClass]="getStageClass(lead.stage)">{{ lead.stage }}</td>
               <td>{{ lead.lastActivityUtc | date: 'short' }}</td>
+              <td>{{ lead.lastEvent || '-' }}</td>
+              <td>{{ lead.lastEmailName || '-' }}</td>
+              <td>{{ lead.nextEmailName || '-' }}</td>
+              <td>{{ lead.nextDateTimeUtc ? (lead.nextDateTimeUtc | date: 'short') : '-' }}</td>
+              <td [ngClass]="getStageClass(lead.nextStage)">{{ lead.nextStage }}</td>
+              <td>{{ lead.signupCompleted ? 'true' : 'false' }}</td>
+              <td>{{ lead.profileCompletion ? 'true' : 'false' }}</td>
+              <td>{{ lead.profileCompletion ? (lead.selectedPlan || '-') : '-' }}</td>
+              <td>{{ lead.profileCompletion && lead.planRenewalDate ? (lead.planRenewalDate | date: 'short') : '-' }}</td>
             </tr>
           </tbody>
         </table>

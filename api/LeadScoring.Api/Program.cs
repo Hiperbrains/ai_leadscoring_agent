@@ -23,6 +23,11 @@ builder.Services.AddScoped<LeadScoringService>();
 builder.Services.AddScoped<LeadImportService>();
 builder.Services.AddScoped<IBatchRepository, BatchRepository>();
 builder.Services.AddScoped<IBatchProcessingService, BatchProcessingService>();
+builder.Services.AddHttpClient(nameof(UserSignupStatusService), client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(30);
+});
+builder.Services.AddScoped<IUserSignupStatusService, UserSignupStatusService>();
 var disableEmailSending = builder.Configuration.GetValue<bool>("Email:DisableSending");
 if (disableEmailSending)
 {

@@ -60,6 +60,25 @@ public class BatchRepository(LeadScoringDbContext db) : IBatchRepository
             .ToListAsync(cancellationToken);
     }
 
+    public Task<Lead?> GetLeadForUpdateAsync(Guid leadId, CancellationToken cancellationToken)
+    {
+        return db.Leads.FirstOrDefaultAsync(x => x.Id == leadId, cancellationToken);
+    }
+
+    public Task<EmailTemplate?> GetActiveTemplateForStageAsync(LeadStage stage, int? productId, CancellationToken cancellationToken)
+    {
+        return db.EmailTemplates
+            .Where(t => t.IsActive && t.Stage == stage && (t.ProductId == productId || t.ProductId == null))
+            .OrderByDescending(t => t.ProductId == productId)
+            .ThenByDescending(t => t.UpdatedAt ?? t.CreatedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+    }
+
+    public async Task AddEventAsync(LeadEvent leadEvent, CancellationToken cancellationToken)
+    {
+        await db.Events.AddAsync(leadEvent, cancellationToken);
+    }
+
     public Task SaveChangesAsync(CancellationToken cancellationToken)
     {
         return db.SaveChangesAsync(cancellationToken);

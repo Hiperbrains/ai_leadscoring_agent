@@ -13,6 +13,13 @@ public class Lead
     public DateTime CreatedAtUtc { get; set; }
     public DateTime LastActivityUtc { get; set; }
     public DateTime? LastScoredAtUtc { get; set; }
+    public bool UserExists { get; set; }
+    public bool SignupCompleted { get; set; }
+    public bool LoginDataExists { get; set; }
+    public bool ProfileCompletion { get; set; }
+    public bool IsPlanSelected { get; set; }
+    public string? SelectedPlan { get; set; }
+    public DateTime? PlanRenewalDate { get; set; }
 
     public ICollection<BatchLead> BatchLeads { get; set; } = new List<BatchLead>();
 }

@@ -1,11 +1,14 @@
 using LeadScoring.Api.Contracts;
 using LeadScoring.Api.Models;
 using LeadScoring.Api.Repositories;
+using System.Net;
 
 namespace LeadScoring.Api.Services;
 
 public class BatchProcessingService(
     IBatchRepository batchRepository,
+    IUserSignupStatusService userSignupStatusService,
+    IEmailService emailService,
     ILogger<BatchProcessingService> logger) : IBatchProcessingService
 {
     private static readonly DateTime DefaultStartDate = new(1900, 1, 1, 0, 0, 0, DateTimeKind.Utc);
@@ -158,13 +161,94 @@ public class BatchProcessingService(
         }
     }
 
-    private static Task<LeadProcessResult> ProcessLeadAsync(Guid leadId, CancellationToken cancellationToken)
+    private async Task<LeadProcessResult> ProcessLeadAsync(Guid leadId, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var isSuccess = leadId.GetHashCode() % 5 != 0;
-        return Task.FromResult(isSuccess
-            ? LeadProcessResult.Success()
-            : LeadProcessResult.Failure("Simulated processing failure."));
+
+        var lead = await batchRepository.GetLeadForUpdateAsync(leadId, cancellationToken);
+        if (lead is null)
+        {
+            return LeadProcessResult.Failure("Lead not found.");
+        }
+
+        UserSignupStatusData signupStatus;
+        try
+        {
+            signupStatus = await userSignupStatusService.CheckUserSignupStatusAsync(lead, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Signup status check failed for lead {LeadId}", leadId);
+            return LeadProcessResult.Failure($"Signup status check failed: {ex.Message}");
+        }
+
+        lead.UserExists = signupStatus.UserExists;
+        lead.SignupCompleted = signupStatus.SignupCompleted;
+        lead.LoginDataExists = signupStatus.LoginDataExists;
+        lead.ProfileCompletion = signupStatus.ProfileCompletion;
+        lead.IsPlanSelected = signupStatus.IsPlanSelected;
+        lead.SelectedPlan = signupStatus.SelectedPlan;
+        lead.PlanRenewalDate = signupStatus.PlanRenewalDate;
+
+        if (lead.ProfileCompletion)
+        {
+            await batchRepository.SaveChangesAsync(cancellationToken);
+            return LeadProcessResult.Success();
+        }
+
+        if (!lead.UserExists)
+        {
+            await batchRepository.SaveChangesAsync(cancellationToken);
+            return LeadProcessResult.Success();
+        }
+
+        var template = await batchRepository.GetActiveTemplateForStageAsync(lead.Stage, lead.ProductId, cancellationToken);
+        if (template is null)
+        {
+            await batchRepository.SaveChangesAsync(cancellationToken);
+            return LeadProcessResult.Success();
+        }
+
+        var eventName = $"batch_stage_{lead.Stage.ToString().ToLowerInvariant()}";
+        var resolvedBody = ResolveTemplate(template.EmailBodyHtml, lead, eventName, template.IsTrackingEnabled);
+        if (!string.IsNullOrWhiteSpace(template.CtaButtonText) && !string.IsNullOrWhiteSpace(template.CtaLink))
+        {
+            var resolvedLink = ResolveTemplate(template.CtaLink, lead, eventName, template.IsTrackingEnabled);
+            resolvedBody += $"""
+
+                <p style="margin-top:20px;">
+                  <a href="{resolvedLink}" style="display:inline-block;background:#2de06a;color:#00233c;text-decoration:none;font-weight:700;padding:12px 24px;border-radius:8px;">{WebUtility.HtmlEncode(template.CtaButtonText)}</a>
+                </p>
+                """;
+        }
+
+        await emailService.SendAsync(lead.Email, template.Subject, resolvedBody);
+        await batchRepository.AddEventAsync(new LeadEvent
+        {
+            Id = Guid.NewGuid(),
+            LeadId = lead.Id,
+            Type = EventType.WebsiteActivity,
+            Source = EventSource.Email,
+            TimestampUtc = DateTime.UtcNow,
+            MetadataJson = $$"""{"eventName":"{{eventName}}","templateName":"{{template.Name}}","systemMarker":"BatchStageEmailSent"}"""
+        }, cancellationToken);
+
+        await batchRepository.SaveChangesAsync(cancellationToken);
+        return LeadProcessResult.Success();
+    }
+
+    private static string ResolveTemplate(string value, Lead lead, string eventName, bool trackingEnabled)
+    {
+        var leadId = lead.Id.ToString("D");
+        var emailValue = trackingEnabled ? Uri.EscapeDataString(lead.Email) : lead.Email;
+        var eventValue = trackingEnabled ? Uri.EscapeDataString(eventName) : eventName;
+        var leadIdValue = trackingEnabled ? Uri.EscapeDataString(leadId) : leadId;
+
+        return value
+            .Replace("{{email}}", emailValue, StringComparison.OrdinalIgnoreCase)
+            .Replace("{{event}}", eventValue, StringComparison.OrdinalIgnoreCase)
+            .Replace("{{leadId}}", leadIdValue, StringComparison.OrdinalIgnoreCase)
+            .Replace("{{stage}}", lead.Stage.ToString(), StringComparison.OrdinalIgnoreCase);
     }
 
     private sealed record LeadProcessResult(bool IsSuccess, string? ErrorMessage)
