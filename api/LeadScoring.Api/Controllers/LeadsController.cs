@@ -4,6 +4,7 @@ using LeadScoring.Api.Models;
 using LeadScoring.Api.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 
 namespace LeadScoring.Api.Controllers;
 
@@ -15,6 +16,121 @@ public class LeadsController(
     IEmailService emailService,
     LeadImportService leadImportService) : ControllerBase
 {
+    [HttpPost("email-exists")]
+    public async Task<ActionResult<LeadEmailExistsResponse>> CheckEmailExists([FromBody] LeadEmailExistsRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Email))
+        {
+            return BadRequest("email is required.");
+        }
+
+        var normalizedEmail = request.Email.Trim().ToLowerInvariant();
+        var lead = await db.Leads
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => EF.Functions.ILike(x.Email, normalizedEmail));
+
+        return Ok(new LeadEmailExistsResponse(
+            Email: normalizedEmail,
+            Exists: lead is not null,
+            LeadId: lead?.Id));
+    }
+
+    [HttpPost("website-demo/submit")]
+    public async Task<ActionResult<WebsiteDemoSubmitResponse>> SubmitWebsiteDemo([FromBody] WebsiteDemoSubmitRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.VisitorId))
+        {
+            return BadRequest("visitorId is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(request.Email))
+        {
+            return BadRequest("email is required.");
+        }
+
+        var normalizedEmail = request.Email.Trim().ToLowerInvariant();
+        var nowUtc = DateTime.UtcNow;
+
+        var lead = await db.Leads
+            .FirstOrDefaultAsync(x => EF.Functions.ILike(x.Email, normalizedEmail));
+
+        var leadCreated = false;
+        if (lead is null)
+        {
+            lead = new Lead
+            {
+                Id = Guid.NewGuid(),
+                VisitorId = request.VisitorId.Trim(),
+                Email = normalizedEmail,
+                FirstName = request.FirstName?.Trim(),
+                LastName = request.LastName?.Trim(),
+                ProductId = request.ProductId,
+                WelcomeEmailSent = false,
+                Score = 0,
+                Stage = LeadStage.Cold,
+                CreatedAtUtc = nowUtc,
+                LastActivityUtc = nowUtc
+            };
+            db.Leads.Add(lead);
+            leadCreated = true;
+        }
+        else
+        {
+            if (string.IsNullOrWhiteSpace(lead.VisitorId))
+            {
+                lead.VisitorId = request.VisitorId.Trim();
+            }
+
+            lead.FirstName = string.IsNullOrWhiteSpace(request.FirstName) ? lead.FirstName : request.FirstName.Trim();
+            lead.LastName = string.IsNullOrWhiteSpace(request.LastName) ? lead.LastName : request.LastName.Trim();
+            lead.ProductId = request.ProductId ?? lead.ProductId;
+            lead.LastActivityUtc = nowUtc;
+        }
+
+        var visitorId = request.VisitorId.Trim();
+        var existingMap = await db.LeadVisitorMaps
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.LeadId == lead.Id && x.VisitorId == visitorId);
+
+        var visitorMapped = false;
+        if (existingMap is null)
+        {
+            db.LeadVisitorMaps.Add(new LeadVisitorMap
+            {
+                LeadId = lead.Id,
+                VisitorId = visitorId,
+                Email = normalizedEmail,
+                FirstName = request.FirstName?.Trim(),
+                LastName = request.LastName?.Trim(),
+                PhoneNumber = request.PhoneNumber?.Trim(),
+                CompanyName = request.CompanyName?.Trim(),
+                Country = request.Country?.Trim(),
+                Notes = request.Notes?.Trim(),
+                CreatedAtUtc = nowUtc
+            });
+            visitorMapped = true;
+        }
+
+        db.Events.Add(new LeadEvent
+        {
+            Id = Guid.NewGuid(),
+            LeadId = lead.Id,
+            Type = EventType.BookDemo,
+            Source = EventSource.Website,
+            TimestampUtc = nowUtc,
+            MetadataJson = BuildWebsiteDemoMetadata(request, visitorId)
+        });
+
+        await db.SaveChangesAsync();
+
+        return Ok(new WebsiteDemoSubmitResponse(
+            lead.Id,
+            lead.Email,
+            leadCreated,
+            visitorMapped,
+            EventCreated: true));
+    }
+
     [HttpPost("import-file")]
     [Consumes("multipart/form-data")]
     public async Task<IActionResult> ImportFile([FromForm] ImportLeadsRequest request)
@@ -127,5 +243,30 @@ public class LeadsController(
             .Replace("{{event}}", eventValue, StringComparison.OrdinalIgnoreCase)
             .Replace("{{leadId}}", leadIdValue, StringComparison.OrdinalIgnoreCase)
             .Replace("{{stage}}", LeadStage.Cold.ToString(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string BuildWebsiteDemoMetadata(WebsiteDemoSubmitRequest request, string visitorId)
+    {
+        var metadata = new Dictionary<string, object?>
+        {
+            ["eventName"] = "Book demo",
+            ["systemMarker"] = "WebsiteDemoSubmitted",
+            ["visitorId"] = visitorId,
+            ["email"] = request.Email.Trim().ToLowerInvariant(),
+            ["firstName"] = request.FirstName,
+            ["lastName"] = request.LastName,
+            ["phoneNumber"] = request.PhoneNumber,
+            ["country"] = request.Country,
+            ["companyName"] = request.CompanyName,
+            ["notes"] = request.Notes,
+            ["productId"] = request.ProductId
+        };
+
+        if (!string.IsNullOrWhiteSpace(request.MetadataJson))
+        {
+            metadata["rawMetadata"] = request.MetadataJson;
+        }
+
+        return JsonSerializer.Serialize(metadata);
     }
 }

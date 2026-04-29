@@ -12,10 +12,12 @@ public class LeadScoringDbContext(DbContextOptions<LeadScoringDbContext> options
     public DbSet<BatchConfig> BatchConfigs => Set<BatchConfig>();
     public DbSet<Batch> Batches => Set<Batch>();
     public DbSet<BatchLead> BatchLeads => Set<BatchLead>();
+    public DbSet<LeadVisitorMap> LeadVisitorMaps => Set<LeadVisitorMap>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<Lead>().HasIndex(x => x.Email).IsUnique();
+        modelBuilder.Entity<Lead>().HasIndex(x => x.VisitorId);
         modelBuilder.Entity<LeadEvent>().HasIndex(x => new { x.LeadId, x.Type, x.TimestampUtc });
         modelBuilder.Entity<CompanyProductConfig>().HasIndex(x => new { x.CompanyName, x.ProductName, x.ProductId }).IsUnique();
         modelBuilder.Entity<EmailTemplate>().HasKey(x => x.TemplateId);
@@ -44,5 +46,16 @@ public class LeadScoringDbContext(DbContextOptions<LeadScoringDbContext> options
             .WithMany(x => x.BatchLeads)
             .HasForeignKey(x => x.LeadId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<LeadVisitorMap>().HasKey(x => x.Id);
+        modelBuilder.Entity<LeadVisitorMap>()
+            .HasIndex(x => new { x.LeadId, x.VisitorId })
+            .IsUnique();
+        modelBuilder.Entity<LeadVisitorMap>().HasIndex(x => x.VisitorId);
+        modelBuilder.Entity<LeadVisitorMap>()
+            .HasOne(x => x.Lead)
+            .WithMany()
+            .HasForeignKey(x => x.LeadId)
+            .OnDelete(DeleteBehavior.Cascade);
     }
 }
