@@ -2,7 +2,9 @@ using LeadScoring.Api.Contracts;
 using System.Text.Json;
 using LeadScoring.Api.Models;
 using LeadScoring.Api.Services;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.WebUtilities;
 using System.Net;
 
 namespace LeadScoring.Api.Controllers;
@@ -20,29 +22,214 @@ public class TrackingController(
     [HttpGet("/r")]
     public async Task<IActionResult> UniversalTrackingLink([FromQuery] string? src, [FromQuery] string? cmp, [FromQuery] string? redirect)
     {
+        var validatedRedirect = ResolveSafeRedirectAbsolute(redirect);
         var source = VisitorAttributionService.ParseSource(src);
         var visitorId = GetOrCreateVisitorId();
         var userAgent = Request.Headers.UserAgent.ToString();
         var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
 
         await visitorAttributionService.EnsureVisitorAsync(visitorId, source, userAgent, ipAddress);
+        AppendVisitorCookie(visitorId);
+
+        var metadata = new Dictionary<string, object?>
+        {
+            ["eventName"] = "UniversalTrackingClick",
+            ["source"] = source.ToString(),
+            ["visitorId"] = visitorId,
+            ["redirectUrl"] = validatedRedirect.AbsoluteUri,
+            ["funnelStage"] = "EmailGateQueued"
+        };
+
+        var referer = Request.Headers.Referer.ToString();
+        if (!string.IsNullOrWhiteSpace(referer))
+        {
+            metadata["referer"] = referer;
+        }
+
+        if (!string.IsNullOrWhiteSpace(userAgent))
+        {
+            metadata["userAgent"] = userAgent.Length > 512 ? userAgent[..512] : userAgent;
+        }
+
+        if (!string.IsNullOrWhiteSpace(ipAddress))
+        {
+            metadata["ipAddress"] = ipAddress;
+        }
+
         await visitorAttributionService.TrackAnonymousEventAsync(
             visitorId,
             source,
             EventType.WebsiteActivity,
-            metadataJson: $$"""{"eventName":"UniversalTrackingClick","source":"{{source}}"}""",
+            metadataJson: JsonSerializer.Serialize(metadata),
             campaign: cmp);
 
-        Response.Cookies.Append("visitorId", visitorId, new CookieOptions
+        var emailGateOrigin = RedirectSafety.BuildEmailGateUri(Request, configuration["Tracking:EmailGateOrigin"]);
+        var emailBasePath = $"{emailGateOrigin.AbsoluteUri.TrimEnd('/')}/email";
+        var emailUrl = QueryHelpers.AddQueryString(emailBasePath, "visitorId", visitorId);
+        emailUrl = QueryHelpers.AddQueryString(emailUrl, "src", VisitorAttributionService.ToAttributionToken(source));
+        emailUrl = QueryHelpers.AddQueryString(emailUrl, "redirect", validatedRedirect.AbsoluteUri);
+        if (!string.IsNullOrWhiteSpace(cmp))
         {
-            HttpOnly = false,
-            Secure = Request.IsHttps,
-            SameSite = SameSiteMode.Lax,
-            Expires = DateTimeOffset.UtcNow.AddYears(1)
-        });
+            emailUrl = QueryHelpers.AddQueryString(emailUrl, "cmp", cmp.Trim());
+        }
 
-        var destination = ResolveRedirect(redirect);
-        return Redirect(destination);
+        return Redirect(emailUrl);
+    }
+
+    /// <summary>Forwards /email on the API host to the email-gate SPA (same query string). Requires Tracking:EmailGateOrigin when API and UI differ.</summary>
+    [HttpGet("/email")]
+    public IActionResult ForwardEmailGateToSpa()
+    {
+        var emailGateOrigin = RedirectSafety.BuildEmailGateUri(Request, configuration["Tracking:EmailGateOrigin"]);
+        var apiAuthority = $"{Request.Scheme}://{Request.Host.Value}".TrimEnd('/');
+        var gateAuthority = emailGateOrigin.GetLeftPart(UriPartial.Authority).TrimEnd('/');
+        if (string.Equals(apiAuthority, gateAuthority, StringComparison.OrdinalIgnoreCase))
+        {
+            return NotFound(new
+            {
+                error =
+                    "Email capture is served by the SPA. Set Tracking:EmailGateOrigin to your UI base URL (for local dev see appsettings.Development.json)."
+            });
+        }
+
+        var target = $"{emailGateOrigin.AbsoluteUri.TrimEnd('/')}/email{Request.QueryString}";
+        return Redirect(target);
+    }
+
+    [HttpPost("/capture-email")]
+    [Produces("application/json")]
+    public async Task<IActionResult> CaptureEmail([FromBody] CaptureEmailRequest body)
+    {
+        if (string.IsNullOrWhiteSpace(body.VisitorId) || string.IsNullOrWhiteSpace(body.Email))
+        {
+            return BadRequest(new { error = "visitorId and email are required." });
+        }
+
+        if (string.IsNullOrWhiteSpace(body.Redirect))
+        {
+            return BadRequest(new { error = "redirect is required." });
+        }
+
+        var trimmedEmail = body.Email.Trim();
+        if (trimmedEmail.Length > 254 || !trimmedEmail.Contains('@', StringComparison.Ordinal))
+        {
+            return BadRequest(new { error = "Invalid email." });
+        }
+
+        var validatedTarget = ResolveSafeRedirectAbsolute(body.Redirect);
+        var source = VisitorAttributionService.ParseSource(body.Source);
+        var visitorIdNormalized = body.VisitorId.Trim();
+        var ua = Request.Headers.UserAgent.ToString();
+        var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
+
+        await visitorAttributionService.EnsureVisitorAsync(visitorIdNormalized, source, ua, ip);
+
+        await visitorAttributionService.CaptureEmailFromGateAsync(
+            visitorIdNormalized,
+            trimmedEmail,
+            source,
+            body.Campaign,
+            body.DwellMs);
+
+        AppendVisitorCookie(visitorIdNormalized);
+
+        var merged =
+            MergeAttributionIntoRedirect(validatedTarget.AbsoluteUri, source, body.Campaign, appendEmailCaptured: true);
+        return Ok(new CaptureEmailResponse(merged));
+    }
+
+    [HttpGet("email-hint")]
+    [Produces("application/json")]
+    public async Task<IActionResult> EmailHint([FromQuery] string? visitorId)
+    {
+        if (string.IsNullOrWhiteSpace(visitorId))
+        {
+            return BadRequest(new { error = "visitorId is required." });
+        }
+
+        visitorId = visitorId.Trim();
+        var already = await visitorAttributionService.VisitorAlreadyIdentifiedAsync(visitorId);
+        var email = await visitorAttributionService.TryGetCapturedEmailAsync(visitorId);
+        return Ok(new VisitorEmailHintResponse(email, already));
+    }
+
+    /// <summary>Build allowlisted attribution redirect for the SPA.</summary>
+    [HttpGet("merged-destination")]
+    [Produces("application/json")]
+    public IActionResult MergedDestination(
+        [FromQuery] string? redirect,
+        [FromQuery] string? src,
+        [FromQuery] string? cmp,
+        [FromQuery] bool emailCaptured = false)
+    {
+        var validated = ResolveSafeRedirectAbsolute(redirect);
+        var sourceParsed = VisitorAttributionService.ParseSource(src);
+        var merged =
+            MergeAttributionIntoRedirect(validated.AbsoluteUri, sourceParsed, cmp, appendEmailCaptured: emailCaptured);
+        return Ok(new RedirectMergeResponse(merged));
+    }
+
+
+    /// <summary>
+    /// Cross-origin redirects cannot rely on the tracking host cookie. Append source/campaign to the destination query
+    /// so the landing app can read <c>ls_src</c> / <c>utm_source</c> (and optional <c>ls_cmp</c> / <c>utm_campaign</c>).
+    /// </summary>
+    private static string MergeAttributionIntoRedirect(string redirectUrl, EventSource source, string? campaign, bool appendEmailCaptured)
+    {
+        if (string.IsNullOrWhiteSpace(redirectUrl) || !Uri.TryCreate(redirectUrl, UriKind.Absolute, out var uri))
+        {
+            return redirectUrl;
+        }
+
+        try
+        {
+            var ub = new UriBuilder(uri);
+            var rawQuery = ub.Query ?? string.Empty;
+            if (rawQuery.StartsWith("?", StringComparison.Ordinal))
+            {
+                rawQuery = rawQuery[1..];
+            }
+
+            var parsed = QueryHelpers.ParseQuery(rawQuery);
+            var dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var kv in parsed)
+            {
+                if (kv.Value.Count > 0)
+                {
+                    dict[kv.Key] = kv.Value[^1] ?? string.Empty;
+                }
+            }
+
+            var token = VisitorAttributionService.ToAttributionToken(source);
+            dict["ls_src"] = token;
+            dict["src"] = token;
+            if (appendEmailCaptured)
+            {
+                dict["emailCaptured"] = "true";
+            }
+            if (!string.IsNullOrWhiteSpace(campaign))
+            {
+                var cmpTrim = campaign.Trim();
+                dict["ls_cmp"] = cmpTrim;
+                if (!dict.ContainsKey("utm_campaign"))
+                {
+                    dict["utm_campaign"] = cmpTrim;
+                }
+            }
+
+            if (!dict.ContainsKey("utm_source"))
+            {
+                dict["utm_source"] = token;
+            }
+
+            var qs = QueryString.Create(dict.Select(static kvp => new KeyValuePair<string, string?>(kvp.Key, kvp.Value)));
+            ub.Query = qs.HasValue ? qs.Value.TrimStart('?') : string.Empty;
+            return ub.Uri.AbsoluteUri;
+        }
+        catch
+        {
+            return redirectUrl;
+        }
     }
 
     [HttpGet("open")]
@@ -129,14 +316,28 @@ public class TrackingController(
         return Accepted();
     }
 
-    private string ResolveRedirect(string? redirect)
+    private Uri ResolveSafeRedirectAbsolute(string? redirect)
     {
-        if (!string.IsNullOrWhiteSpace(redirect) && Uri.IsWellFormedUriString(redirect, UriKind.Absolute))
-        {
-            return redirect;
-        }
+        var configured = configuration["Tracking:DefaultRedirectUrl"]?.Trim();
+        var defaultUri =
+            !string.IsNullOrWhiteSpace(configured) &&
+            RedirectSafety.TryGetAllowedAbsoluteRedirect(configured, out var parsed) &&
+            parsed is not null
+                ? parsed
+                : RedirectSafety.DefaultHiperbrainsSite;
 
-        return configuration["Tracking:DefaultRedirectUrl"] ?? "https://www.hiperlabs.com";
+        return RedirectSafety.SafeRedirectDestination(redirect, defaultUri);
+    }
+
+    private void AppendVisitorCookie(string visitorId)
+    {
+        Response.Cookies.Append("visitorId", visitorId, new CookieOptions
+        {
+            HttpOnly = false,
+            Secure = Request.IsHttps,
+            SameSite = SameSiteMode.Lax,
+            Expires = DateTimeOffset.UtcNow.AddYears(1)
+        });
     }
 
     private string GetOrCreateVisitorId()

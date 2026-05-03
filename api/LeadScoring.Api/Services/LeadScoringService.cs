@@ -321,6 +321,7 @@ public class LeadScoringService(
             EventType.BlogPost => "Blogs",
             EventType.PricingPage => "Pricing page",
             EventType.EmailClick => "Email click",
+            EventType.EmailCaptured => "Email capture",
             EventType.WebsiteActivity => "Website activity",
             _ => leadEvent.Type.ToString()
         };

@@ -1,0 +1,33 @@
+<div class="gate">
+  <div class="card" *ngIf="!paramError">
+    <h1 class="title">Continue to Hiperbrains</h1>
+    <p class="sub">Enter your email to get personalized experience</p>
+
+    <form (ngSubmit)="submit()" autocomplete="email">
+      <label class="visually-hidden" for="emailGate">Email</label>
+      <input
+        id="emailGate"
+        name="email"
+        type="email"
+        class="field"
+        required
+        maxlength="254"
+        [disabled]="submitting"
+        [(ngModel)]="email"
+        placeholder="you@company.com"
+      />
+
+      <button type="submit" class="cta" [disabled]="submitting">
+        <span *ngIf="!submitting">Continue</span>
+        <span *ngIf="submitting">Sending…</span>
+      </button>
+    </form>
+
+    <p class="error" *ngIf="errorMsg" role="alert">{{ errorMsg }}</p>
+  </div>
+
+  <div class="card error-card" *ngIf="paramError">
+    <h1 class="title">Link issue</h1>
+    <p class="sub">{{ paramError }}</p>
+  </div>
+</div>
