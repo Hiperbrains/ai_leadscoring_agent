@@ -51,9 +51,10 @@ builder.Services.AddHostedService<InactivityWorker>();
 builder.Services.AddHostedService<BatchWorker>();
 var configuredCorsOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
 var allowedCorsOrigins = new HashSet<string>(configuredCorsOrigins, StringComparer.OrdinalIgnoreCase);
+// Default policy so endpoint routing applies CORS (incl. OPTIONS preflight) with credentials for the SPA.
 builder.Services.AddCors(opt =>
 {
-    opt.AddPolicy("ui", p => p
+    opt.AddDefaultPolicy(p => p
         .SetIsOriginAllowed(origin =>
         {
             if (string.IsNullOrWhiteSpace(origin))
@@ -79,10 +80,14 @@ builder.Services.AddCors(opt =>
             return IsPrivateNetworkHost(uri.Host);
         })
         .AllowAnyHeader()
-        .AllowAnyMethod());
+        .AllowAnyMethod()
+        .AllowCredentials());
 });
 
 var app = builder.Build();
+
+app.UseRouting();
+app.UseCors();
 
 if (app.Environment.IsDevelopment())
 {
@@ -90,7 +95,6 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-app.UseCors("ui");
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 app.MapGet("/", () => Results.Redirect("/swagger"));
 app.MapControllers();

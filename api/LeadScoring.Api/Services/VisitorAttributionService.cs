@@ -246,6 +246,7 @@ public class VisitorAttributionService(LeadScoringDbContext db)
             "email" => EventSource.Email,
             "website" => EventSource.Website,
             "linkedin" => EventSource.LinkedIn,
+            "linkdin" => EventSource.LinkedIn,
             "direct" => EventSource.Direct,
             "organic" => EventSource.Organic,
             _ => EventSource.Unknown

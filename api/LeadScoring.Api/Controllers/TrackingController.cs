@@ -2,6 +2,7 @@ using LeadScoring.Api.Contracts;
 using System.Text.Json;
 using LeadScoring.Api.Models;
 using LeadScoring.Api.Services;
+using Microsoft.AspNetCore.Cors;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.WebUtilities;
@@ -9,6 +10,8 @@ using System.Net;
 
 namespace LeadScoring.Api.Controllers;
 
+/// <summary>Tracking, email gate, and merge endpoints used from the SPA on another origin — CORS metadata required.</summary>
+[EnableCors]
 [ApiController]
 [Route("track")]
 public class TrackingController(
@@ -65,8 +68,8 @@ public class TrackingController(
 
         var emailGateOrigin = RedirectSafety.BuildEmailGateUri(Request, configuration["Tracking:EmailGateOrigin"]);
         var emailBasePath = $"{emailGateOrigin.AbsoluteUri.TrimEnd('/')}/email";
-        var emailUrl = QueryHelpers.AddQueryString(emailBasePath, "visitorId", visitorId);
-        emailUrl = QueryHelpers.AddQueryString(emailUrl, "src", VisitorAttributionService.ToAttributionToken(source));
+        // Visitor id is kept in the first-party tracking cookie (and optional site script storage), not in the email-gate URL.
+        var emailUrl = QueryHelpers.AddQueryString(emailBasePath, "src", VisitorAttributionService.ToAttributionToken(source));
         emailUrl = QueryHelpers.AddQueryString(emailUrl, "redirect", validatedRedirect.AbsoluteUri);
         if (!string.IsNullOrWhiteSpace(cmp))
         {
@@ -100,14 +103,20 @@ public class TrackingController(
     [Produces("application/json")]
     public async Task<IActionResult> CaptureEmail([FromBody] CaptureEmailRequest body)
     {
-        if (string.IsNullOrWhiteSpace(body.VisitorId) || string.IsNullOrWhiteSpace(body.Email))
+        if (string.IsNullOrWhiteSpace(body.Email))
         {
-            return BadRequest(new { error = "visitorId and email are required." });
+            return BadRequest(new { error = "email is required." });
         }
 
         if (string.IsNullOrWhiteSpace(body.Redirect))
         {
             return BadRequest(new { error = "redirect is required." });
+        }
+
+        var visitorIdNormalized = TryResolveVisitorId(body.VisitorId);
+        if (string.IsNullOrWhiteSpace(visitorIdNormalized))
+        {
+            visitorIdNormalized = Guid.NewGuid().ToString("N");
         }
 
         var trimmedEmail = body.Email.Trim();
@@ -118,7 +127,6 @@ public class TrackingController(
 
         var validatedTarget = ResolveSafeRedirectAbsolute(body.Redirect);
         var source = VisitorAttributionService.ParseSource(body.Source);
-        var visitorIdNormalized = body.VisitorId.Trim();
         var ua = Request.Headers.UserAgent.ToString();
         var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
 
@@ -133,24 +141,81 @@ public class TrackingController(
 
         AppendVisitorCookie(visitorIdNormalized);
 
-        var merged =
-            MergeAttributionIntoRedirect(validatedTarget.AbsoluteUri, source, body.Campaign, appendEmailCaptured: true);
-        return Ok(new CaptureEmailResponse(merged));
+        var merged = MergeAttributionIntoRedirect(
+            validatedTarget.AbsoluteUri,
+            source,
+            body.Campaign,
+            appendEmailCaptured: true,
+            capturedEmail: trimmedEmail,
+            attributionSourceRaw: body.Source);
+        return Ok(new CaptureEmailResponse(merged, visitorIdNormalized));
+    }
+
+    [HttpPost("/skip-email-gate")]
+    [Produces("application/json")]
+    public async Task<IActionResult> SkipEmailGate([FromBody] SkipEmailGateRequest body)
+    {
+        if (string.IsNullOrWhiteSpace(body.Redirect))
+        {
+            return BadRequest(new { error = "redirect is required." });
+        }
+
+        var visitorIdNormalized = TryResolveVisitorId(body.VisitorId);
+        if (string.IsNullOrWhiteSpace(visitorIdNormalized))
+        {
+            visitorIdNormalized = Guid.NewGuid().ToString("N");
+        }
+
+        var validatedTarget = ResolveSafeRedirectAbsolute(body.Redirect);
+        var source = VisitorAttributionService.ParseSource(body.Source);
+        var ua = Request.Headers.UserAgent.ToString();
+        var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
+
+        await visitorAttributionService.EnsureVisitorAsync(visitorIdNormalized, source, ua, ip);
+
+        var skipMetadata = JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["eventName"] = "EmailGateSkipped",
+            ["visitorId"] = visitorIdNormalized,
+            ["declaredEmail"] = "unknown",
+            ["dwellMs"] = body.DwellMs
+        });
+
+        await visitorAttributionService.TrackAnonymousEventAsync(
+            visitorIdNormalized,
+            source,
+            EventType.WebsiteActivity,
+            metadataJson: skipMetadata,
+            body.Campaign);
+
+        AppendVisitorCookie(visitorIdNormalized);
+
+        // Landing URL: only source, email=unknown, campaign — do not carry leadId or other params from redirect.
+        var merged = MergeAttributionIntoRedirect(
+            validatedTarget.AbsoluteUri,
+            source,
+            body.Campaign,
+            appendEmailCaptured: false,
+            capturedEmail: null,
+            attributionSourceRaw: body.Source,
+            unknownEmailSkipMinimal: true);
+        return Ok(new CaptureEmailResponse(merged, visitorIdNormalized));
     }
 
     [HttpGet("email-hint")]
     [Produces("application/json")]
     public async Task<IActionResult> EmailHint([FromQuery] string? visitorId)
     {
-        if (string.IsNullOrWhiteSpace(visitorId))
+        var resolved = TryResolveVisitorId(visitorId);
+        if (string.IsNullOrWhiteSpace(resolved))
         {
-            return BadRequest(new { error = "visitorId is required." });
+            // Empty payload so the SPA can prefill from localStorage / continue without a 400 in DevTools.
+            return Ok(new VisitorEmailHintResponse(null, false, null));
         }
 
-        visitorId = visitorId.Trim();
-        var already = await visitorAttributionService.VisitorAlreadyIdentifiedAsync(visitorId);
-        var email = await visitorAttributionService.TryGetCapturedEmailAsync(visitorId);
-        return Ok(new VisitorEmailHintResponse(email, already));
+        var already = await visitorAttributionService.VisitorAlreadyIdentifiedAsync(resolved);
+        var email = await visitorAttributionService.TryGetCapturedEmailAsync(resolved);
+        return Ok(new VisitorEmailHintResponse(email, already, resolved));
     }
 
     /// <summary>Build allowlisted attribution redirect for the SPA.</summary>
@@ -164,17 +229,32 @@ public class TrackingController(
     {
         var validated = ResolveSafeRedirectAbsolute(redirect);
         var sourceParsed = VisitorAttributionService.ParseSource(src);
-        var merged =
-            MergeAttributionIntoRedirect(validated.AbsoluteUri, sourceParsed, cmp, appendEmailCaptured: emailCaptured);
+        var merged = MergeAttributionIntoRedirect(
+            validated.AbsoluteUri,
+            sourceParsed,
+            cmp,
+            appendEmailCaptured: emailCaptured,
+            capturedEmail: null,
+            attributionSourceRaw: src);
         return Ok(new RedirectMergeResponse(merged));
     }
 
 
     /// <summary>
-    /// Cross-origin redirects cannot rely on the tracking host cookie. Append source/campaign to the destination query
-    /// so the landing app can read <c>ls_src</c> / <c>utm_source</c> (and optional <c>ls_cmp</c> / <c>utm_campaign</c>).
+    /// Cross-origin redirects cannot rely on the tracking host cookie. Merges attribution into the destination query,
+    /// including <c>source</c>, <c>email</c> (after capture), and <c>campaign</c> for landing apps, plus legacy
+    /// <c>ls_src</c> / <c>utm_source</c> / <c>utm_campaign</c> where applicable.
+    /// When <paramref name="unknownEmailSkipMinimal"/> is true (email-gate skip), the query is replaced with only
+    /// <c>source</c>, <c>email=unknown</c>, and optional <c>campaign</c> — no <c>leadId</c> or other inherited params.
     /// </summary>
-    private static string MergeAttributionIntoRedirect(string redirectUrl, EventSource source, string? campaign, bool appendEmailCaptured)
+    private static string MergeAttributionIntoRedirect(
+        string redirectUrl,
+        EventSource source,
+        string? campaign,
+        bool appendEmailCaptured,
+        string? capturedEmail = null,
+        string? attributionSourceRaw = null,
+        bool unknownEmailSkipMinimal = false)
     {
         if (string.IsNullOrWhiteSpace(redirectUrl) || !Uri.TryCreate(redirectUrl, UriKind.Absolute, out var uri))
         {
@@ -184,6 +264,28 @@ public class TrackingController(
         try
         {
             var ub = new UriBuilder(uri);
+
+            if (unknownEmailSkipMinimal)
+            {
+                var tokenSkip = VisitorAttributionService.ToAttributionToken(source);
+                var sourceForSkip = !string.IsNullOrWhiteSpace(attributionSourceRaw)
+                    ? attributionSourceRaw.Trim().ToLowerInvariant()
+                    : tokenSkip;
+                var minimal = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["source"] = sourceForSkip,
+                    ["email"] = "unknown"
+                };
+                if (!string.IsNullOrWhiteSpace(campaign))
+                {
+                    minimal["campaign"] = campaign.Trim();
+                }
+
+                var qsSkip = QueryString.Create(minimal.Select(static kvp => new KeyValuePair<string, string?>(kvp.Key, kvp.Value)));
+                ub.Query = qsSkip.HasValue ? qsSkip.Value.TrimStart('?') : string.Empty;
+                return ub.Uri.AbsoluteUri;
+            }
+
             var rawQuery = ub.Query ?? string.Empty;
             if (rawQuery.StartsWith("?", StringComparison.Ordinal))
             {
@@ -201,16 +303,28 @@ public class TrackingController(
             }
 
             var token = VisitorAttributionService.ToAttributionToken(source);
+            var sourceForLanding = !string.IsNullOrWhiteSpace(attributionSourceRaw)
+                ? attributionSourceRaw.Trim().ToLowerInvariant()
+                : token;
+
             dict["ls_src"] = token;
             dict["src"] = token;
-            if (appendEmailCaptured)
+            dict["source"] = sourceForLanding;
+
+            if (!string.IsNullOrWhiteSpace(capturedEmail))
+            {
+                dict["email"] = capturedEmail.Trim();
+            }
+            else if (appendEmailCaptured)
             {
                 dict["emailCaptured"] = "true";
             }
+
             if (!string.IsNullOrWhiteSpace(campaign))
             {
                 var cmpTrim = campaign.Trim();
                 dict["ls_cmp"] = cmpTrim;
+                dict["campaign"] = cmpTrim;
                 if (!dict.ContainsKey("utm_campaign"))
                 {
                     dict["utm_campaign"] = cmpTrim;
@@ -348,6 +462,22 @@ public class TrackingController(
         }
 
         return Guid.NewGuid().ToString("N");
+    }
+
+    /// <summary>Prefer explicit id (e.g. from site script), then first-party tracking cookie set by <c>/r</c>.</summary>
+    private string? TryResolveVisitorId(string? explicitVisitorId)
+    {
+        if (!string.IsNullOrWhiteSpace(explicitVisitorId))
+        {
+            return explicitVisitorId.Trim();
+        }
+
+        if (Request.Cookies.TryGetValue("visitorId", out var fromCookie) && !string.IsNullOrWhiteSpace(fromCookie))
+        {
+            return fromCookie.Trim();
+        }
+
+        return null;
     }
 
     private static string? MergeMetadata(string? metadataJson, string? eventType)

@@ -1,23 +1,68 @@
 <div class="gate">
   <div class="card" *ngIf="!paramError">
+    <button
+      type="button"
+      class="dismiss-skip"
+      [disabled]="submitting"
+      (click)="skip()"
+      aria-label="Skip without sharing email"
+      title="Skip without sharing email"
+    >
+      <svg class="dismiss-skip-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path
+          d="M6 6l12 12M18 6L6 18"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.75"
+          stroke-linecap="round"
+        />
+      </svg>
+    </button>
+
     <h1 class="title">Continue to Hiperbrains</h1>
     <p class="sub">Enter your email to get personalized experience</p>
 
-    <form (ngSubmit)="submit()" autocomplete="email">
+    <!--
+      Chrome/password managers treat "sign-in" as username + password. Use autocomplete="username" for email
+      and a companion password field so saved logins surface; sync native value into ngModel in the component.
+    -->
+    <form (ngSubmit)="submit()" autocomplete="on" novalidate>
       <label class="visually-hidden" for="emailGate">Email</label>
       <input
+        #emailGate
         id="emailGate"
-        name="email"
+        name="username"
         type="email"
         class="field"
         required
         maxlength="254"
         [disabled]="submitting"
+        [readOnly]="autofillReadonlyShim"
+        (focusin)="clearAutofillReadonlyShim()"
         [(ngModel)]="email"
         placeholder="you@company.com"
+        autocomplete="username"
+        inputmode="email"
+        autocapitalize="off"
+        spellcheck="false"
+        (input)="syncEmailFromNativeInput()"
+        (change)="syncEmailFromNativeInput()"
+        (animationstart)="onAutofillAnimationStart($event)"
       />
 
-      <button type="submit" class="cta" [disabled]="submitting">
+      <label class="visually-hidden" for="gatePasswordHint">Password (for browser saved logins only)</label>
+      <input
+        id="gatePasswordHint"
+        name="password"
+        type="password"
+        class="credential-pair-hint"
+        tabindex="-1"
+        aria-hidden="true"
+        autocomplete="current-password"
+        [disabled]="submitting"
+      />
+
+      <button type="submit" class="cta" [disabled]="submitting || !emailLooksValid()">
         <span *ngIf="!submitting">Continue</span>
         <span *ngIf="submitting">Sending…</span>
       </button>
