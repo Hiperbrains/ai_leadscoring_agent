@@ -107,6 +107,35 @@ public class BatchRepository(
             .ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task<List<Lead>> GetDay3LeadsForStageAsync(LeadStage stage, DateTime runDateUtc, CancellationToken cancellationToken)
+    {
+        var fromUtc = runDateUtc.Date;
+        var toUtc = fromUtc.AddDays(1);
+        return await (await AccessibleLeadsAsync(cancellationToken).ConfigureAwait(false))
+            .Where(x =>
+                x.Stage == stage &&
+                ((x.CreatedAtUtc >= fromUtc && x.CreatedAtUtc < toUtc) ||
+                 x.Stage == LeadStage.Mql ||
+                 x.Stage == LeadStage.Hot) &&
+                (x.LastEmailSentDateUtc == null || x.LastEmailSentDateUtc < fromUtc) &&
+                (x.NextEmailSendDateUtc == null || x.NextEmailSendDateUtc <= runDateUtc))
+            .OrderBy(x => x.LastEmailSentDateUtc ?? x.CreatedAtUtc)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<List<Lead>> GetDay4LeadsForStageAsync(LeadStage stage, DateTime runDateUtc, CancellationToken cancellationToken)
+    {
+        var thresholdUtc = runDateUtc.AddDays(-4);
+        return await (await AccessibleLeadsAsync(cancellationToken).ConfigureAwait(false))
+            .Where(x =>
+                x.Stage == stage &&
+                x.LastEmailSentDateUtc.HasValue &&
+                x.LastEmailSentDateUtc <= thresholdUtc &&
+                (x.NextEmailSendDateUtc == null || x.NextEmailSendDateUtc <= runDateUtc))
+            .OrderBy(x => x.LastEmailSentDateUtc)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+    }
+
     public async Task<List<Lead>> GetAllLeadsForPreviewAsync(CancellationToken cancellationToken)
     {
         return await (await AccessibleLeadsAsync(cancellationToken).ConfigureAwait(false))
@@ -203,6 +232,36 @@ public class BatchRepository(
                 .FirstOrDefaultAsync(cancellationToken),
             CampaignBatchType.Day4 => _companyDb.EmailTemplates
                 .Where(t => t.IsActive && t.IsFollowUp && (t.Stage == LeadStage.Mql || t.Stage == LeadStage.Hot) && (t.ProductId == lead.ProductId || t.ProductId == null))
+                .OrderByDescending(t => t.ProductId == lead.ProductId)
+                .ThenByDescending(t => t.UpdatedAt ?? t.CreatedAt)
+                .FirstOrDefaultAsync(cancellationToken),
+            CampaignBatchType.Warm => _companyDb.EmailTemplates
+                .Where(t => t.IsActive && !t.IsFollowUp && t.Stage == LeadStage.Warm && (t.ProductId == lead.ProductId || t.ProductId == null))
+                .OrderByDescending(t => t.ProductId == lead.ProductId)
+                .ThenByDescending(t => t.UpdatedAt ?? t.CreatedAt)
+                .FirstOrDefaultAsync(cancellationToken),
+            CampaignBatchType.WarmFollowUp => _companyDb.EmailTemplates
+                .Where(t => t.IsActive && t.IsFollowUp && t.Stage == LeadStage.Warm && (t.ProductId == lead.ProductId || t.ProductId == null))
+                .OrderByDescending(t => t.ProductId == lead.ProductId)
+                .ThenByDescending(t => t.UpdatedAt ?? t.CreatedAt)
+                .FirstOrDefaultAsync(cancellationToken),
+            CampaignBatchType.Mql => _companyDb.EmailTemplates
+                .Where(t => t.IsActive && !t.IsFollowUp && t.Stage == LeadStage.Mql && (t.ProductId == lead.ProductId || t.ProductId == null))
+                .OrderByDescending(t => t.ProductId == lead.ProductId)
+                .ThenByDescending(t => t.UpdatedAt ?? t.CreatedAt)
+                .FirstOrDefaultAsync(cancellationToken),
+            CampaignBatchType.MqlFollowUp => _companyDb.EmailTemplates
+                .Where(t => t.IsActive && t.IsFollowUp && t.Stage == LeadStage.Mql && (t.ProductId == lead.ProductId || t.ProductId == null))
+                .OrderByDescending(t => t.ProductId == lead.ProductId)
+                .ThenByDescending(t => t.UpdatedAt ?? t.CreatedAt)
+                .FirstOrDefaultAsync(cancellationToken),
+            CampaignBatchType.Hot => _companyDb.EmailTemplates
+                .Where(t => t.IsActive && !t.IsFollowUp && t.Stage == LeadStage.Hot && (t.ProductId == lead.ProductId || t.ProductId == null))
+                .OrderByDescending(t => t.ProductId == lead.ProductId)
+                .ThenByDescending(t => t.UpdatedAt ?? t.CreatedAt)
+                .FirstOrDefaultAsync(cancellationToken),
+            CampaignBatchType.HotFollowUp => _companyDb.EmailTemplates
+                .Where(t => t.IsActive && t.IsFollowUp && t.Stage == LeadStage.Hot && (t.ProductId == lead.ProductId || t.ProductId == null))
                 .OrderByDescending(t => t.ProductId == lead.ProductId)
                 .ThenByDescending(t => t.UpdatedAt ?? t.CreatedAt)
                 .FirstOrDefaultAsync(cancellationToken),

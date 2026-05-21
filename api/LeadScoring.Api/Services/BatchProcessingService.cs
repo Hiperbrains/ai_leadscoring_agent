@@ -50,7 +50,7 @@ public class BatchProcessingService(
                 continue;
             }
 
-            if (batchType == CampaignBatchType.Day4 && lead.LastEmailSentDateUtc.HasValue)
+            if (SetsReengagementNextSendQuietWindow(batchType) && lead.LastEmailSentDateUtc.HasValue)
             {
                 var hasEngagement = await batchRepository.HasEngagementSinceLastEmailAsync(
                     lead.Id,
@@ -583,7 +583,7 @@ public class BatchProcessingService(
         {
             lead.WelcomeEmailSent = true;
         }
-        else if (batchType == CampaignBatchType.Day4)
+        else if (SetsReengagementNextSendQuietWindow(batchType))
         {
             lead.NextEmailSendDateUtc = sentAtUtc.AddDays(7);
         }
@@ -683,12 +683,24 @@ public class BatchProcessingService(
         }
     }
 
+    private static bool SetsReengagementNextSendQuietWindow(CampaignBatchType batchType)
+        => batchType is CampaignBatchType.Day4
+            or CampaignBatchType.WarmFollowUp
+            or CampaignBatchType.MqlFollowUp
+            or CampaignBatchType.HotFollowUp;
+
     private static string FormatCampaignBatchTypeLabel(CampaignBatchType batchType) => batchType switch
     {
-        CampaignBatchType.Day1 => "Day 1",
-        CampaignBatchType.Day2 => "Day 2",
+        CampaignBatchType.Day1 => "COLD",
+        CampaignBatchType.Day2 => "COLD FOLLOWUP",
         CampaignBatchType.Day3 => "Day 3",
         CampaignBatchType.Day4 => "Day 4",
+        CampaignBatchType.Warm => "WARM",
+        CampaignBatchType.WarmFollowUp => "WARM FOLLOWUP",
+        CampaignBatchType.Mql => "MQL",
+        CampaignBatchType.MqlFollowUp => "MQL FOLLOWUP",
+        CampaignBatchType.Hot => "HOT",
+        CampaignBatchType.HotFollowUp => "HOT FOLLOWUP",
         _ => batchType.ToString()
     };
 
@@ -856,6 +868,12 @@ public class BatchProcessingService(
             CampaignBatchType.Day3 => parsed ?? LeadStage.Warm,
             CampaignBatchType.Day4 when parsed is LeadStage.Mql or LeadStage.Hot => parsed!.Value,
             CampaignBatchType.Day4 => LeadStage.Mql,
+            CampaignBatchType.Warm => parsed ?? LeadStage.Warm,
+            CampaignBatchType.WarmFollowUp => parsed ?? LeadStage.Warm,
+            CampaignBatchType.Mql => parsed ?? LeadStage.Mql,
+            CampaignBatchType.MqlFollowUp => parsed ?? LeadStage.Mql,
+            CampaignBatchType.Hot => parsed ?? LeadStage.Hot,
+            CampaignBatchType.HotFollowUp => parsed ?? LeadStage.Hot,
             _ => LeadStage.Cold
         };
     }
@@ -912,6 +930,12 @@ public class BatchProcessingService(
             CampaignBatchType.Day2 => await batchRepository.GetDay2LeadsAsync(runDateUtc, cancellationToken),
             CampaignBatchType.Day3 => await batchRepository.GetDay3LeadsAsync(runDateUtc, cancellationToken),
             CampaignBatchType.Day4 => await batchRepository.GetDay4LeadsAsync(runDateUtc, cancellationToken),
+            CampaignBatchType.Warm => await batchRepository.GetDay3LeadsForStageAsync(LeadStage.Warm, runDateUtc, cancellationToken),
+            CampaignBatchType.Mql => await batchRepository.GetDay3LeadsForStageAsync(LeadStage.Mql, runDateUtc, cancellationToken),
+            CampaignBatchType.Hot => await batchRepository.GetDay3LeadsForStageAsync(LeadStage.Hot, runDateUtc, cancellationToken),
+            CampaignBatchType.WarmFollowUp => await batchRepository.GetDay4LeadsForStageAsync(LeadStage.Warm, runDateUtc, cancellationToken),
+            CampaignBatchType.MqlFollowUp => await batchRepository.GetDay4LeadsForStageAsync(LeadStage.Mql, runDateUtc, cancellationToken),
+            CampaignBatchType.HotFollowUp => await batchRepository.GetDay4LeadsForStageAsync(LeadStage.Hot, runDateUtc, cancellationToken),
             _ => []
         };
     }

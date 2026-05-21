@@ -10,7 +10,9 @@ public interface IBatchRepository
     Task<List<Lead>> GetDay1LeadsAsync(DateTime runDateUtc, CancellationToken cancellationToken);
     Task<List<Lead>> GetDay2LeadsAsync(DateTime runDateUtc, CancellationToken cancellationToken);
     Task<List<Lead>> GetDay3LeadsAsync(DateTime runDateUtc, CancellationToken cancellationToken);
+    Task<List<Lead>> GetDay3LeadsForStageAsync(LeadStage stage, DateTime runDateUtc, CancellationToken cancellationToken);
     Task<List<Lead>> GetDay4LeadsAsync(DateTime runDateUtc, CancellationToken cancellationToken);
+    Task<List<Lead>> GetDay4LeadsForStageAsync(LeadStage stage, DateTime runDateUtc, CancellationToken cancellationToken);
     Task<List<Lead>> GetAllLeadsForPreviewAsync(CancellationToken cancellationToken);
     Task<BatchPreviewLeadAggregates> GetLeadAggregatesForPreviewAsync(DateTime nowUtc, CancellationToken cancellationToken);
     Task<List<Lead>> GetLeadsDidNotOpenSinceLastEmailAsync(CancellationToken cancellationToken);

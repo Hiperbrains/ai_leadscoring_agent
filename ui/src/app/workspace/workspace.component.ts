@@ -1323,13 +1323,32 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
     this.manualLeadTakeCount = Math.min(Math.max(1, v), n);
   }
 
-  /** Maps API numeric enum or string batch type to the same labels as the batch-type dropdown. */
+  /** Maps API numeric enum or string batch type to the same labels as the manual batch template dropdown. */
   manualBatchTypeLabel(batchType: unknown): string {
     let code: number | null = null;
     if (typeof batchType === 'number' && Number.isFinite(batchType)) {
       code = batchType;
-    } else if (batchType === 'Day1' || batchType === 'Day2' || batchType === 'Day3' || batchType === 'Day4') {
-      code = { Day1: 1, Day2: 2, Day3: 3, Day4: 4 }[batchType];
+    } else if (typeof batchType === 'string') {
+      const nameToCode: Record<string, number> = {
+        Day1: 1,
+        Day2: 2,
+        Day3: 3,
+        Day4: 4,
+        Warm: 5,
+        WarmFollowUp: 6,
+        Mql: 7,
+        MqlFollowUp: 8,
+        Hot: 9,
+        HotFollowUp: 10
+      };
+      if (batchType in nameToCode) {
+        code = nameToCode[batchType];
+      } else {
+        const parsed = Number.parseInt(batchType, 10);
+        if (!Number.isNaN(parsed)) {
+          code = parsed;
+        }
+      }
     } else {
       const parsed = Number.parseInt(String(batchType ?? ''), 10);
       if (!Number.isNaN(parsed)) {
@@ -1337,30 +1356,21 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
       }
     }
     const labels: Record<number, string> = {
-      1: 'Day 1 – Welcome (Cold)',
-      2: 'Day 2 – Follow-up',
-      3: 'Day 3 – Stage-based (MQL / Hot)',
-      4: 'Day 4 – Re-engagement'
+      1: 'COLD',
+      2: 'COLD FOLLOWUP',
+      3: 'Day 3 (automated mix)',
+      4: 'Day 4 (automated)',
+      5: 'WARM',
+      6: 'WARM FOLLOWUP',
+      7: 'MQL',
+      8: 'MQL FOLLOWUP',
+      9: 'HOT',
+      10: 'HOT FOLLOWUP'
     };
     if (code !== null && labels[code]) {
       return labels[code];
     }
     return String(batchType ?? '');
-  }
-
-  /** Manual batch dropdown → API numeric `CampaignBatchType`. */
-  private manualBatchEnumCode(): number {
-    switch (this.manualBatchType) {
-      case 'Day2':
-        return 2;
-      case 'Day3':
-        return 3;
-      case 'Day4':
-        return 4;
-      case 'Day1':
-      default:
-        return 1;
-    }
   }
 
   manualScopeLabel(scope: unknown): string {
@@ -1631,7 +1641,15 @@ interface CompanyProductConfig {
 }
 
 type LeftTab = 'dashboard' | 'leads' | 'company-config' | 'tracking-links' | 'manual-batch';
-type ManualBatchType = 'Day1' | 'Day2' | 'Day3' | 'Day4';
+type ManualBatchType =
+  | 'Day1'
+  | 'Day2'
+  | 'Warm'
+  | 'WarmFollowUp'
+  | 'Mql'
+  | 'MqlFollowUp'
+  | 'Hot'
+  | 'HotFollowUp';
 type ManualScope =
   | 'TotalEligible'
   | 'TotalLeads'
@@ -1648,7 +1666,7 @@ type ManualScope =
 interface BatchPreviewResult {
   /** Signed-in tenant / workspace company label (camelCase JSON). Optional for older backends. */
   companyName?: string;
-  /** API may serialize `CampaignBatchType` as a number (1–4). */
+  /** API may serialize `CampaignBatchType` as a number (1–10). */
   batchType: ManualBatchType | number;
   totalLeadsCount: number;
   stage0Count: number;

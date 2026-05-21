@@ -721,18 +721,22 @@
 </div>
 
 <div *ngIf="activeTab === 'manual-batch'">
-  <app-workspace-top-bar title="Manual batch" subtitle="Send Day 1–4 sequence emails outside the automated schedule." />
+  <app-workspace-top-bar title="Manual batch" subtitle="Send cold through hot sequence emails outside the automated schedule." />
 
   <app-card heading="Configure send"
-    subheading="Choose the sequence day and audience segment, confirm how many recipients to include, then send.">
+    subheading="Choose the email template type and audience segment, confirm how many recipients to include, then send.">
     <div class="manual-batch-field manual-batch-field--type">
-      <label for="mbType">Email sequence day</label>
+      <label for="mbType">Template type</label>
       <select id="mbType" class="ws-select ws-select--batch-type" [(ngModel)]="manualBatchType"
         (ngModelChange)="onManualBatchTypeChange()" name="mbType">
-        <option [ngValue]="'Day1'">Day 1 – Welcome (Cold)</option>
-        <option [ngValue]="'Day2'">Day 2 – Follow-up</option>
-        <option [ngValue]="'Day3'">Day 3 – Stage-based (MQL / Hot)</option>
-        <option [ngValue]="'Day4'">Day 4 – Re-engagement</option>
+        <option [ngValue]="'Day1'">COLD</option>
+        <option [ngValue]="'Warm'">WARM</option>
+        <option [ngValue]="'Mql'">MQL</option>
+        <option [ngValue]="'Hot'">HOT</option>
+        <option [ngValue]="'Day2'">COLD FOLLOWUP</option>
+        <option [ngValue]="'WarmFollowUp'">WARM FOLLOWUP</option>
+        <option [ngValue]="'MqlFollowUp'">MQL FOLLOWUP</option>
+        <option [ngValue]="'HotFollowUp'">HOT FOLLOWUP</option>
       </select>
       <p class="caption-muted">Recipient counts reload when this changes.</p>
     </div>
@@ -742,7 +746,7 @@
         Loading recipient counts…
       </div>
       <div *ngIf="!manualPreview && !manualLoading && !manualError" class="manual-batch-preview-placeholder">
-        Recipient counts load automatically for the sequence day shown above (this may take a moment).
+        Recipient counts load automatically for the template type shown above (this may take a moment).
       </div>
 
       <div *ngIf="manualPreview" class="manual-batch-summary" [class.manual-batch-summary--busy]="manualLoading">
@@ -872,7 +876,7 @@
           <thead>
             <tr>
               <th>Job Id</th>
-              <th>Sequence day</th>
+              <th>Template type</th>
               <th>Segment</th>
               <th>Status</th>
               <th>Total</th>
@@ -901,7 +905,7 @@
   <app-card *ngIf="manualRunResult && !manualLoading" heading="Latest send outcome">
     <div class="manual-batch-results">
       <ul class="manual-batch-result-list">
-        <li><span class="muted-lbl">Sequence day</span> {{ manualBatchTypeLabel(manualRunResult.batchType) }}</li>
+        <li><span class="muted-lbl">Template type</span> {{ manualBatchTypeLabel(manualRunResult.batchType) }}</li>
         <li><span class="muted-lbl">Total processed</span> {{ manualRunResult.totalLeads | number }}</li>
         <li><span class="muted-lbl">Success</span> {{ manualRunResult.successCount | number }}</li>
         <li><span class="muted-lbl">Failed</span> {{ manualRunResult.failureCount | number }}</li>
@@ -938,7 +942,7 @@
           <thead>
             <tr>
               <th>Sent at (UTC)</th>
-              <th>Sequence day</th>
+              <th>Template type</th>
               <th>Segment</th>
               <th>Total processed</th>
               <th>Success</th>
@@ -983,7 +987,7 @@
           <tr>
             <th>Batch ID</th>
             <th>Run time (UTC)</th>
-            <th>Sequence day</th>
+            <th>Template type</th>
             <th>Total processed</th>
             <th>Success</th>
             <th>Failed</th>
