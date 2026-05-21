@@ -51,10 +51,10 @@ public class TenantDatabaseProvisioner(IConfiguration configuration, ILogger<Ten
     {
         var masterConnection = configuration.GetConnectionString("Hiperbrains")
             ?? throw new InvalidOperationException("Connection string 'Hiperbrains' is missing.");
-        await MigratePublicCompanyProductConfigsAsync(masterConnection, schemaName, cancellationToken);
 
         if (ReadySchemas.ContainsKey(schemaName))
         {
+            await MigratePublicCompanyProductConfigsAsync(masterConnection, schemaName, cancellationToken);
             return;
         }
 
@@ -64,10 +64,14 @@ public class TenantDatabaseProvisioner(IConfiguration configuration, ILogger<Ten
         {
             if (ReadySchemas.ContainsKey(schemaName))
             {
+                await MigratePublicCompanyProductConfigsAsync(masterConnection, schemaName, cancellationToken);
                 return;
             }
 
             await EnsureReadyCoreAsync(schemaName, cancellationToken);
+
+            // Tenant schema must be migrated before this INSERT — it targets columns such as StageThresholdsJson.
+            await MigratePublicCompanyProductConfigsAsync(masterConnection, schemaName, cancellationToken);
         }
         finally
         {
@@ -200,13 +204,14 @@ public class TenantDatabaseProvisioner(IConfiguration configuration, ILogger<Ten
         await using var migrateCmd = new NpgsqlCommand(
             $"""
             INSERT INTO "{escapedSchema}"."CompanyProductConfigs"
-                ("Id", "CompanyName", "ProductName", "ProductId", "ProductEventConfigJson", "CreatedAtUtc")
+                ("Id", "CompanyName", "ProductName", "ProductId", "ProductEventConfigJson", "StageThresholdsJson", "CreatedAtUtc")
             SELECT
                 p."Id",
                 p."CompanyName",
                 p."ProductName",
                 p."ProductId",
                 p."ProductEventConfigJson",
+                NULL::text AS "StageThresholdsJson",
                 COALESCE(p."CreatedAtUtc", NOW() AT TIME ZONE 'utc')
             FROM public."CompanyProductConfigs" p
             WHERE 'tenant_' || LEFT(REGEXP_REPLACE(LOWER(TRIM(p."CompanyName")), '[^a-z0-9]+', '', 'g'), 40) = @schema

@@ -398,7 +398,7 @@
 </div>
 
 <div *ngIf="activeTab === 'company-config'">
-  <app-workspace-top-bar title="Company Config" subtitle="Create product event-score mapping for each company." />
+  <app-workspace-top-bar title="Company Config" subtitle="Map funnel events and lead stage score thresholds per company product." />
 
   <app-card heading="Company Product Config">
     <div class="info-banner">
@@ -410,9 +410,9 @@
       <div class="info-banner__text">
         <p class="info-banner__title">How to add a company product config</p>
         <p class="info-banner__body">
-          Enter or pick a <strong>company</strong> and <strong>product</strong> (saved names appear as suggestions). Add
-          each funnel event you care about—like “Pricing page” or “Book demo”—and give it a score of <strong>0 or
-            higher</strong>. Submit to save; your configs show up in the <strong>list below</strong>, where you can
+          Enter or pick a <strong>company</strong> and <strong>product</strong> (saved names appear as suggestions). Map
+          each funnel event to a score (0 or higher). Set minimum <strong>cumulative</strong> scores for
+          Cold → Warm → MQL → Hot (defaults match the legacy cut-offs). Submit to save; configs appear below where you can
           filter or edit.
         </p>
       </div>
@@ -460,6 +460,21 @@
           <app-button variant="secondary" type="button" (click)="addEventItem()">+ Add Item</app-button>
         </div>
       </app-table>
+    </div>
+    <div class="event-config-section">
+      <h3 class="subsection-title">Lead stage thresholds (minimum total score)</h3>
+      <p class="event-config-hint caption-muted">
+        A lead stays <strong>Cold</strong> below the Warm threshold, then progresses as their <strong>cumulative</strong>
+        score crosses Warm, then MQL, then Hot (Hot includes the threshold and above).
+      </p>
+      <div class="config-form-grid stage-threshold-grid">
+        <app-input label="Warm from score ≥" type="number" [min]="1" name="ccfWarmThr" placeholder="e.g. 51"
+          [(ngModel)]="companyProductForm.warmMinScore" />
+        <app-input label="MQL from score ≥" type="number" name="ccfMqlThr" placeholder="e.g. 101"
+          [(ngModel)]="companyProductForm.mqlMinScore" />
+        <app-input label="Hot from score ≥" type="number" name="ccfHotThr" placeholder="e.g. 151"
+          [(ngModel)]="companyProductForm.hotMinScore" />
+      </div>
     </div>
     <div class="config-actions">
       <app-button variant="primary" type="button" (click)="saveCompanyConfig()" [loading]="savingConfig"
@@ -510,6 +525,7 @@
                   <app-badge [score]="evt.value">{{ evt.key }}: {{ evt.value }}</app-badge>
                   }
                 </div>
+                <div class="config-list-stage-line caption-muted">{{ stageThresholdCaption(config) }}</div>
                 } @else {
                 <span class="config-list-events-empty">—</span>
                 }
@@ -554,8 +570,8 @@
     <div class="company-config-edit-modal__panel" role="dialog" aria-modal="true"
       aria-labelledby="company-config-edit-title">
       <h2 id="company-config-edit-title" class="company-config-edit-modal__title">Edit company product config</h2>
-      <p class="company-config-edit-modal__subtitle caption-muted">Update company, product, and event scores. Changes
-        apply when you save.</p>
+      <p class="company-config-edit-modal__subtitle caption-muted">Update company, product, event scores, and stage
+        thresholds. Changes apply when you save.</p>
 
       <div class="config-form-grid">
         <app-combobox label="Company Name" [required]="true" name="ccfCompanyEdit" placeholder="Type or choose company"
@@ -600,6 +616,21 @@
             <app-button variant="secondary" type="button" (click)="addEditEventItem()">+ Add Item</app-button>
           </div>
         </app-table>
+      </div>
+
+      <div class="event-config-section company-config-edit-modal__event-section">
+        <h3 class="subsection-title">Lead stage thresholds (minimum total score)</h3>
+        <p class="event-config-hint caption-muted">
+          Cumulative score boundaries: Warm &lt; MQL &lt; Hot; Cold stays below Warm.
+        </p>
+        <div class="config-form-grid stage-threshold-grid">
+          <app-input label="Warm from score ≥" type="number" [min]="1" name="ccfWarmThrEdit" placeholder="e.g. 51"
+            [(ngModel)]="companyProductEditForm.warmMinScore" />
+          <app-input label="MQL from score ≥" type="number" name="ccfMqlThrEdit" placeholder="e.g. 101"
+            [(ngModel)]="companyProductEditForm.mqlMinScore" />
+          <app-input label="Hot from score ≥" type="number" name="ccfHotThrEdit" placeholder="e.g. 151"
+            [(ngModel)]="companyProductEditForm.hotMinScore" />
+        </div>
       </div>
 
       <p class="flash flash-error" *ngIf="configEditModalError">{{ configEditModalError }}</p>

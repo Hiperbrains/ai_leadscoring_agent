@@ -25,7 +25,13 @@ public class CompanyProductConfigsController(LeadScoringDbContext db, ITenantCon
             return BadRequest(errorMessage);
         }
 
+        if (!StageScoreThresholdsNormalizer.TryNormalizeFromRequest(request.StageThresholds, out var stageThresholds, out var stageError))
+        {
+            return BadRequest(stageError);
+        }
+
         var configJson = JsonSerializer.Serialize(normalizedItems);
+        var stageJson = StageScoreThresholdsNormalizer.SerializeNormalized(stageThresholds);
         var nextProductId = await GetNextProductIdAsync();
         var entity = new CompanyProductConfig
         {
@@ -34,6 +40,7 @@ public class CompanyProductConfigsController(LeadScoringDbContext db, ITenantCon
             ProductName = request.ProductName.Trim(),
             ProductId = nextProductId,
             ProductEventConfigJson = configJson,
+            StageThresholdsJson = stageJson,
             CreatedAtUtc = DateTime.UtcNow
         };
 
@@ -53,6 +60,7 @@ public class CompanyProductConfigsController(LeadScoringDbContext db, ITenantCon
             entity.ProductName,
             entity.ProductId,
             entity.ProductEventConfigJson,
+            entity.StageThresholdsJson,
             entity.CreatedAtUtc);
 
         return Ok(dto);
@@ -69,6 +77,11 @@ public class CompanyProductConfigsController(LeadScoringDbContext db, ITenantCon
             return BadRequest(errorMessage);
         }
 
+        if (!StageScoreThresholdsNormalizer.TryNormalizeFromRequest(request.StageThresholds, out var stageThresholds, out var stageError))
+        {
+            return BadRequest(stageError);
+        }
+
         var entity = await db.CompanyProductConfigs.FirstOrDefaultAsync(x => x.Id == id);
         if (entity is null || !BelongsToTenant(entity))
         {
@@ -78,6 +91,7 @@ public class CompanyProductConfigsController(LeadScoringDbContext db, ITenantCon
         entity.CompanyName = tenantContext.CompanyName!.Trim();
         entity.ProductName = request.ProductName.Trim();
         entity.ProductEventConfigJson = JsonSerializer.Serialize(normalizedItems);
+        entity.StageThresholdsJson = StageScoreThresholdsNormalizer.SerializeNormalized(stageThresholds);
 
         try
         {
@@ -94,6 +108,7 @@ public class CompanyProductConfigsController(LeadScoringDbContext db, ITenantCon
             entity.ProductName,
             entity.ProductId,
             entity.ProductEventConfigJson,
+            entity.StageThresholdsJson,
             entity.CreatedAtUtc);
 
         return Ok(dto);
@@ -121,6 +136,7 @@ public class CompanyProductConfigsController(LeadScoringDbContext db, ITenantCon
                 x.ProductName,
                 x.ProductId,
                 x.ProductEventConfigJson,
+                x.StageThresholdsJson,
                 x.CreatedAtUtc))
             .ToListAsync();
 

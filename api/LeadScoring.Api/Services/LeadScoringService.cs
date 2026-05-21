@@ -1,3 +1,4 @@
+using LeadScoring.Api.Contracts;
 using LeadScoring.Api.Data;
 using LeadScoring.Api.Models;
 using System.Net;
@@ -37,7 +38,8 @@ public class LeadScoringService(
         if (scoreDelta > 0)
         {
             lead.Score += scoreDelta;
-            lead.Stage = ResolveStage(lead.Score);
+            var thresholds = await GetStageThresholdsForLeadAsync(lead);
+            lead.Stage = ResolveStage(lead.Score, thresholds);
             lead.LastScoredAtUtc = DateTime.UtcNow;
         }
 
@@ -199,15 +201,40 @@ public class LeadScoringService(
         await db.SaveChangesAsync(cancellationToken);
     }
 
-    private static LeadStage ResolveStage(int score)
+    private async Task<StageScoreThresholdsDto> GetStageThresholdsForLeadAsync(Lead lead)
     {
-        return score switch
+        if (!lead.ProductId.HasValue)
         {
-            <= 50 => LeadStage.Cold,
-            <= 100 => LeadStage.Warm,
-            <= 150 => LeadStage.Mql,
-            _ => LeadStage.Hot
-        };
+            return StageScoreThresholdsNormalizer.CreateDefaultClone();
+        }
+
+        var json = await db.CompanyProductConfigs.AsNoTracking()
+            .Where(x => x.ProductId == lead.ProductId.Value)
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .Select(x => x.StageThresholdsJson)
+            .FirstOrDefaultAsync();
+
+        return StageScoreThresholdsNormalizer.ParseOrDefaults(json);
+    }
+
+    private static LeadStage ResolveStage(int score, StageScoreThresholdsDto thresholds)
+    {
+        if (score < thresholds.WarmMin)
+        {
+            return LeadStage.Cold;
+        }
+
+        if (score < thresholds.MqlMin)
+        {
+            return LeadStage.Warm;
+        }
+
+        if (score < thresholds.HotMin)
+        {
+            return LeadStage.Mql;
+        }
+
+        return LeadStage.Hot;
     }
 
     private async Task<int> GetScoreDeltaAsync(Lead lead, LeadEvent leadEvent)

@@ -680,6 +680,9 @@
   gap: var(--space-4);
 }
 
+.stage-threshold-grid{grid-template-columns:repeat(auto-fit,minmax(10rem,1fr))}
+.config-list-stage-line{margin-top:var(--space-2)}
+
 /* Toolbar inside app-table-shell: list action (Add Item) grouped with rows */
 .event-score-table-toolbar {
   display: flex;

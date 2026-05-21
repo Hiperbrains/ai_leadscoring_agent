@@ -50,6 +50,12 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
   private copyFlashTimer?: ReturnType<typeof setTimeout>;
   /** Debounced reload for company-config list search (ms). */
   private static readonly companyConfigFilterDebounceMs = 320;
+  /** Default Warm/MQL/Hot minimum-score boundaries (aligned with backend legacy buckets). */
+  private static readonly defaultStageFormValues = {
+    warmMinScore: '51',
+    mqlMinScore: '101',
+    hotMinScore: '151'
+  } as const;
   private companyConfigFilterSearchTimer?: ReturnType<typeof setTimeout>;
   /** Set after the first `syncTabFromRoute` applies so identical tab route events can be skipped. */
   private workspaceRouteSynced = false;
@@ -107,14 +113,20 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
   companyProductEditForm: CompanyProductForm = {
     companyName: '',
     productName: '',
-    items: [{ eventName: '', score: '' }]
+    items: [{ eventName: '', score: '' }],
+    warmMinScore: WorkspaceComponent.defaultStageFormValues.warmMinScore,
+    mqlMinScore: WorkspaceComponent.defaultStageFormValues.mqlMinScore,
+    hotMinScore: WorkspaceComponent.defaultStageFormValues.hotMinScore
   };
   configEditModalError = '';
   savingEditModal = false;
   companyProductForm: CompanyProductForm = {
     companyName: '',
     productName: '',
-    items: [{ eventName: '', score: '' }]
+    items: [{ eventName: '', score: '' }],
+    warmMinScore: WorkspaceComponent.defaultStageFormValues.warmMinScore,
+    mqlMinScore: WorkspaceComponent.defaultStageFormValues.mqlMinScore,
+    hotMinScore: WorkspaceComponent.defaultStageFormValues.hotMinScore
   };
   manualBatchType: ManualBatchType = 'Day1';
   private _manualScope: ManualScope = 'TotalEligible';
@@ -1026,6 +1038,63 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
     this.companyProductEditForm.items.splice(index, 1);
   }
 
+  private parseStageThresholdInputs(
+    warmRaw: string,
+    mqlRaw: string,
+    hotRaw: string
+  ):
+    | { ok: true; stageThresholds: StageScoreThresholds }
+    | { ok: false; message: string } {
+    const toInt = (raw: string | number): number | undefined => {
+      const t = String(raw).trim();
+      if (t === '') {
+        return undefined;
+      }
+      const n = Number(t);
+      if (!Number.isInteger(n)) {
+        return undefined;
+      }
+      return n;
+    };
+
+    const warm = toInt(warmRaw);
+    const mql = toInt(mqlRaw);
+    const hot = toInt(hotRaw);
+    if (warm === undefined || mql === undefined || hot === undefined) {
+      return {
+        ok: false,
+        message: 'Enter whole-number minimum scores for Warm, MQL, and Hot thresholds.'
+      };
+    }
+    if (warm < 1) {
+      return {
+        ok: false,
+        message: 'Warm threshold must be at least 1; Cold applies to scores strictly below Warm.'
+      };
+    }
+    if (mql <= warm) {
+      return {
+        ok: false,
+        message: 'The MQL threshold must be greater than the Warm threshold.'
+      };
+    }
+    if (hot <= mql) {
+      return {
+        ok: false,
+        message: 'The Hot threshold must be greater than the MQL threshold.'
+      };
+    }
+    return { ok: true, stageThresholds: { warmMin: warm, mqlMin: mql, hotMin: hot } };
+  }
+
+  stageThresholdCaption(config: CompanyProductConfig): string {
+    const st = config.stageThresholds;
+    const w = st?.warmMin ?? 51;
+    const m = st?.mqlMin ?? 101;
+    const h = st?.hotMin ?? 151;
+    return `Stage thresholds · Warm from ${w} · MQL from ${m} · Hot from ${h}`;
+  }
+
   saveCompanyConfig(): void {
     this.configError = '';
     this.configSuccess = '';
@@ -1061,10 +1130,21 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
       productEventConfig[item.eventName] = Math.max(0, item.score);
     }
 
+    const stageParse = this.parseStageThresholdInputs(
+      this.companyProductForm.warmMinScore,
+      this.companyProductForm.mqlMinScore,
+      this.companyProductForm.hotMinScore
+    );
+    if (!stageParse.ok) {
+      this.configError = stageParse.message;
+      return;
+    }
+
     const payload: UpsertCompanyProductConfigRequest = {
       companyName,
       productName,
-      productEventConfig
+      productEventConfig,
+      stageThresholds: stageParse.stageThresholds
     };
 
     this.savingConfig = true;
@@ -1121,10 +1201,21 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
       productEventConfig[item.eventName] = Math.max(0, item.score);
     }
 
+    const stageParse = this.parseStageThresholdInputs(
+      this.companyProductEditForm.warmMinScore,
+      this.companyProductEditForm.mqlMinScore,
+      this.companyProductEditForm.hotMinScore
+    );
+    if (!stageParse.ok) {
+      this.configEditModalError = stageParse.message;
+      return;
+    }
+
     const payload: UpsertCompanyProductConfigRequest = {
       companyName,
       productName,
-      productEventConfig
+      productEventConfig,
+      stageThresholds: stageParse.stageThresholds
     };
 
     this.savingEditModal = true;
@@ -1149,10 +1240,14 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
       eventName: x.key,
       score: x.value
     }));
+    const st = config.stageThresholds;
     this.companyProductEditForm = {
       companyName: config.companyName,
       productName: config.productName,
-      items: mapped.length > 0 ? mapped : [{ eventName: '', score: '' }]
+      items: mapped.length > 0 ? mapped : [{ eventName: '', score: '' }],
+      warmMinScore: String(st?.warmMin ?? 51),
+      mqlMinScore: String(st?.mqlMin ?? 101),
+      hotMinScore: String(st?.hotMin ?? 151)
     };
     this.configEditModalError = '';
   }
@@ -1162,7 +1257,10 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
     this.companyProductEditForm = {
       companyName: '',
       productName: '',
-      items: [{ eventName: '', score: '' }]
+      items: [{ eventName: '', score: '' }],
+      warmMinScore: WorkspaceComponent.defaultStageFormValues.warmMinScore,
+      mqlMinScore: WorkspaceComponent.defaultStageFormValues.mqlMinScore,
+      hotMinScore: WorkspaceComponent.defaultStageFormValues.hotMinScore
     };
     this.configEditModalError = '';
     this.savingEditModal = false;
@@ -1251,7 +1349,10 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
     this.companyProductForm = {
       companyName: defaultCompanyName,
       productName: '',
-      items: [{ eventName: '', score: '' }]
+      items: [{ eventName: '', score: '' }],
+      warmMinScore: WorkspaceComponent.defaultStageFormValues.warmMinScore,
+      mqlMinScore: WorkspaceComponent.defaultStageFormValues.mqlMinScore,
+      hotMinScore: WorkspaceComponent.defaultStageFormValues.hotMinScore
     };
   }
 
@@ -1671,10 +1772,19 @@ interface LeadImportResult {
   errors: string[];
 }
 
+interface StageScoreThresholds {
+  warmMin: number;
+  mqlMin: number;
+  hotMin: number;
+}
+
 interface CompanyProductForm {
   companyName: string;
   productName: string;
   items: CompanyProductEventItem[];
+  warmMinScore: string;
+  mqlMinScore: string;
+  hotMinScore: string;
 }
 
 interface CompanyProductEventItem {
@@ -1686,6 +1796,7 @@ interface UpsertCompanyProductConfigRequest {
   companyName: string;
   productName: string;
   productEventConfig: Record<string, number>;
+  stageThresholds?: StageScoreThresholds;
 }
 
 interface CompanyProductConfig {
@@ -1694,6 +1805,7 @@ interface CompanyProductConfig {
   productName: string;
   productId: number;
   productEventConfig: Record<string, number>;
+  stageThresholds?: StageScoreThresholds;
   createdAtUtc: string;
 }
 

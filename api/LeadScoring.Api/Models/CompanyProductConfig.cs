@@ -7,5 +7,6 @@ public class CompanyProductConfig
     public string ProductName { get; set; } = string.Empty;
     public int ProductId { get; set; }
     public string ProductEventConfigJson { get; set; } = "{}";
+    public string? StageThresholdsJson { get; set; }
     public DateTime CreatedAtUtc { get; set; }
 }
