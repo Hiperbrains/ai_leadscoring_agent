@@ -23,6 +23,7 @@ public record BatchPreviewLeadAggregates(
     int DidNotOpenEmailCount);
 
 public record BatchPreviewResultDto(
+    string CompanyName,
     CampaignBatchType BatchType,
     int TotalLeadsCount,
     int Stage0Count,

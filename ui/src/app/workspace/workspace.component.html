@@ -750,6 +750,10 @@
 
         <div class="manual-batch-field-section">
           <div class="manual-batch-section-label" id="manualBucketLegend">Audience segment</div>
+          <p *ngIf="manualPreview?.companyName" class="caption-muted" style="margin: 0 0 8px 0">
+            Counts reflect your workspace company: <strong>{{ manualPreview.companyName }}</strong>. They use the same
+            filtering as the <strong>Leads</strong> screen (company name and product scope in shared storage).
+          </p>
           <div class="manual-scope-grid" role="radiogroup" aria-labelledby="manualBucketLegend">
             <div class="manual-scope-row">
               <label class="manual-scope-option">

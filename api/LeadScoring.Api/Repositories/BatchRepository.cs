@@ -1,32 +1,62 @@
 using LeadScoring.Api.Contracts;
 using LeadScoring.Api.Data;
 using LeadScoring.Api.Models;
+using LeadScoring.Api.Services;
 using Microsoft.EntityFrameworkCore;
 
 namespace LeadScoring.Api.Repositories;
 
-public class BatchRepository(LeadScoringDbContext db) : IBatchRepository
+/// <summary>
+/// Lead/event/email-template batch operations run against <see cref="PublicCompanyDbContext"/> with the same company scope as the dashboard.
+/// Tenant-schema <see cref="LeadScoringDbContext"/> stores batch logs, configs, legacy batch entities, etc.
+/// </summary>
+public class BatchRepository(
+    LeadScoringDbContext tenantDb,
+    ICompanyLeadDbAccessor companyLeadAccessor,
+    ITenantLeadScope tenantLeadScope,
+    ITenantContext tenantContext) : IBatchRepository
 {
+    private readonly PublicCompanyDbContext _companyDb = companyLeadAccessor.GetDbContext();
+
+    /// <summary>
+    /// Dashboard and signed-in APIs scope by tenant company; background jobs without <see cref="ITenantContext.IsAuthenticated"/> use shared <c>public</c> leads (same as tenant-less <see cref="LeadScoringDbContext"/> before company scope was added).
+    /// </summary>
+    private Task<IQueryable<Lead>> AccessibleLeadsAsync(CancellationToken cancellationToken)
+    {
+        if (!tenantContext.IsAuthenticated)
+        {
+            return Task.FromResult<IQueryable<Lead>>(_companyDb.Leads);
+        }
+
+        return AccessibleLeadsAuthenticatedAsync(cancellationToken);
+    }
+
+    private async Task<IQueryable<Lead>> AccessibleLeadsAuthenticatedAsync(CancellationToken cancellationToken)
+    {
+        var companyName = await tenantLeadScope.ResolveCompanyNameAsync(cancellationToken).ConfigureAwait(false);
+        return tenantLeadScope.ApplyScope(_companyDb.Leads, companyName);
+    }
+
     public Task<bool> HasBatchRunOnDateAsync(DateTime runDateUtc, CancellationToken cancellationToken)
     {
         var fromUtc = runDateUtc.Date;
         var toUtc = fromUtc.AddDays(1);
-        return db.BatchLogs.AnyAsync(x => x.RunDate >= fromUtc && x.RunDate < toUtc, cancellationToken);
+        return tenantDb.BatchLogs.AnyAsync(x => x.RunDate >= fromUtc && x.RunDate < toUtc, cancellationToken);
     }
 
     public async Task<CampaignBatchType?> GetLastCompletedDailyBatchTypeAsync(CancellationToken cancellationToken)
     {
-        return await db.BatchLogs
+        return await tenantDb.BatchLogs
             .OrderByDescending(x => x.RunDate)
             .Select(x => (CampaignBatchType?)x.BatchType)
             .FirstOrDefaultAsync(cancellationToken);
     }
 
-    public Task<List<Lead>> GetDay1LeadsAsync(DateTime runDateUtc, CancellationToken cancellationToken)
+    public async Task<List<Lead>> GetDay1LeadsAsync(DateTime runDateUtc, CancellationToken cancellationToken)
     {
         var fromUtc = runDateUtc.Date;
         var toUtc = fromUtc.AddDays(1);
-        return db.Leads
+        return await (await AccessibleLeadsAsync(cancellationToken).ConfigureAwait(false))
             .Where(x =>
                 x.Stage == LeadStage.Cold &&
                 x.CreatedAtUtc >= fromUtc &&
@@ -34,27 +64,27 @@ public class BatchRepository(LeadScoringDbContext db) : IBatchRepository
                 !x.WelcomeEmailSent &&
                 (x.NextEmailSendDateUtc == null || x.NextEmailSendDateUtc <= runDateUtc))
             .OrderBy(x => x.CreatedAtUtc)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public Task<List<Lead>> GetDay2LeadsAsync(DateTime runDateUtc, CancellationToken cancellationToken)
+    public async Task<List<Lead>> GetDay2LeadsAsync(DateTime runDateUtc, CancellationToken cancellationToken)
     {
         var inactivityThresholdUtc = runDateUtc.AddDays(-2);
-        return db.Leads
+        return await (await AccessibleLeadsAsync(cancellationToken).ConfigureAwait(false))
             .Where(x =>
                 x.WelcomeEmailSent &&
                 x.LastActivityUtc <= inactivityThresholdUtc &&
                 (x.LastEmailSentDateUtc == null || x.LastEmailSentDateUtc <= inactivityThresholdUtc) &&
                 (x.NextEmailSendDateUtc == null || x.NextEmailSendDateUtc <= runDateUtc))
             .OrderBy(x => x.LastActivityUtc)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public Task<List<Lead>> GetDay3LeadsAsync(DateTime runDateUtc, CancellationToken cancellationToken)
+    public async Task<List<Lead>> GetDay3LeadsAsync(DateTime runDateUtc, CancellationToken cancellationToken)
     {
         var fromUtc = runDateUtc.Date;
         var toUtc = fromUtc.AddDays(1);
-        return db.Leads
+        return await (await AccessibleLeadsAsync(cancellationToken).ConfigureAwait(false))
             .Where(x =>
                 ((x.CreatedAtUtc >= fromUtc && x.CreatedAtUtc < toUtc) ||
                  x.Stage == LeadStage.Mql ||
@@ -62,26 +92,26 @@ public class BatchRepository(LeadScoringDbContext db) : IBatchRepository
                 (x.LastEmailSentDateUtc == null || x.LastEmailSentDateUtc < fromUtc) &&
                 (x.NextEmailSendDateUtc == null || x.NextEmailSendDateUtc <= runDateUtc))
             .OrderBy(x => x.LastEmailSentDateUtc ?? x.CreatedAtUtc)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public Task<List<Lead>> GetDay4LeadsAsync(DateTime runDateUtc, CancellationToken cancellationToken)
+    public async Task<List<Lead>> GetDay4LeadsAsync(DateTime runDateUtc, CancellationToken cancellationToken)
     {
         var thresholdUtc = runDateUtc.AddDays(-4);
-        return db.Leads
+        return await (await AccessibleLeadsAsync(cancellationToken).ConfigureAwait(false))
             .Where(x =>
                 x.LastEmailSentDateUtc.HasValue &&
                 x.LastEmailSentDateUtc <= thresholdUtc &&
                 (x.NextEmailSendDateUtc == null || x.NextEmailSendDateUtc <= runDateUtc))
             .OrderBy(x => x.LastEmailSentDateUtc)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public Task<List<Lead>> GetAllLeadsForPreviewAsync(CancellationToken cancellationToken)
+    public async Task<List<Lead>> GetAllLeadsForPreviewAsync(CancellationToken cancellationToken)
     {
-        return db.Leads
+        return await (await AccessibleLeadsAsync(cancellationToken).ConfigureAwait(false))
             .AsNoTracking()
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<BatchPreviewLeadAggregates> GetLeadAggregatesForPreviewAsync(DateTime nowUtc, CancellationToken cancellationToken)
@@ -89,7 +119,7 @@ public class BatchRepository(LeadScoringDbContext db) : IBatchRepository
         var fromNew = nowUtc.AddDays(-1);
         var inactiveThresholdUtc = nowUtc.AddDays(-2);
         var emailThresholdUtc = nowUtc.AddDays(-4);
-        var baseLeads = db.Leads.AsNoTracking();
+        var baseLeads = (await AccessibleLeadsAsync(cancellationToken).ConfigureAwait(false)).AsNoTracking();
 
         // Do not run these concurrently: one scoped DbContext cannot execute overlapping operations.
         var total = await baseLeads.CountAsync(cancellationToken).ConfigureAwait(false);
@@ -102,7 +132,7 @@ public class BatchRepository(LeadScoringDbContext db) : IBatchRepository
         var emailGap = await baseLeads.CountAsync(
             l => l.LastEmailSentDateUtc.HasValue && l.LastEmailSentDateUtc <= emailThresholdUtc,
             cancellationToken).ConfigureAwait(false);
-        var didNotOpen = await LeadsWithNoUserEngagementSinceLastEmail().CountAsync(cancellationToken).ConfigureAwait(false);
+        var didNotOpen = await ApplyDidNotOpenSinceLastEmailFilter(baseLeads).CountAsync(cancellationToken).ConfigureAwait(false);
 
         return new BatchPreviewLeadAggregates(
             total,
@@ -117,18 +147,20 @@ public class BatchRepository(LeadScoringDbContext db) : IBatchRepository
             didNotOpen);
     }
 
-    public Task<List<Lead>> GetLeadsDidNotOpenSinceLastEmailAsync(CancellationToken cancellationToken)
+    public async Task<List<Lead>> GetLeadsDidNotOpenSinceLastEmailAsync(CancellationToken cancellationToken)
     {
-        return LeadsWithNoUserEngagementSinceLastEmail().ToListAsync(cancellationToken);
+        var baseLeads = (await AccessibleLeadsAsync(cancellationToken).ConfigureAwait(false)).AsNoTracking();
+        return await ApplyDidNotOpenSinceLastEmailFilter(baseLeads)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    private IQueryable<Lead> LeadsWithNoUserEngagementSinceLastEmail()
+    /// <remarks>Uses <see cref="_companyDb"/> <c>Events</c>; pass company-scoped leads only.</remarks>
+    private IQueryable<Lead> ApplyDidNotOpenSinceLastEmailFilter(IQueryable<Lead> scopedLeads)
     {
         const string systemMarkerFragment = "\"systemMarker\":";
-        return db.Leads
-            .AsNoTracking()
+        return scopedLeads
             .Where(l => l.LastEmailSentDateUtc != null)
-            .Where(l => !db.Events.Any(e =>
+            .Where(l => !_companyDb.Events.Any(e =>
                 e.LeadId == l.Id &&
                 e.TimestampUtc > l.LastEmailSentDateUtc!.Value &&
                 (e.MetadataJson == null || !e.MetadataJson.Contains(systemMarkerFragment))));
@@ -136,7 +168,7 @@ public class BatchRepository(LeadScoringDbContext db) : IBatchRepository
 
     public Task<bool> HasBatchMarkerEventAsync(Guid leadId, string marker, DateTime fromUtc, CancellationToken cancellationToken)
     {
-        return db.Events.AnyAsync(x =>
+        return _companyDb.Events.AnyAsync(x =>
             x.LeadId == leadId &&
             x.MetadataJson != null &&
             x.MetadataJson.Contains($"\"systemMarker\":\"{marker}\""), cancellationToken);
@@ -144,7 +176,7 @@ public class BatchRepository(LeadScoringDbContext db) : IBatchRepository
 
     public Task<bool> HasEngagementSinceLastEmailAsync(Guid leadId, DateTime lastEmailSentUtc, CancellationToken cancellationToken)
     {
-        return db.Events.AnyAsync(x =>
+        return _companyDb.Events.AnyAsync(x =>
             x.LeadId == leadId &&
             x.TimestampUtc > lastEmailSentUtc &&
             (x.MetadataJson == null || !x.MetadataJson.Contains("\"systemMarker\":")), cancellationToken);
@@ -154,22 +186,22 @@ public class BatchRepository(LeadScoringDbContext db) : IBatchRepository
     {
         return batchType switch
         {
-            CampaignBatchType.Day1 => db.EmailTemplates
+            CampaignBatchType.Day1 => _companyDb.EmailTemplates
                 .Where(t => t.IsActive && !t.IsFollowUp && t.Stage == LeadStage.Cold && (t.ProductId == lead.ProductId || t.ProductId == null))
                 .OrderByDescending(t => t.ProductId == lead.ProductId)
                 .ThenByDescending(t => t.UpdatedAt ?? t.CreatedAt)
                 .FirstOrDefaultAsync(cancellationToken),
-            CampaignBatchType.Day2 => db.EmailTemplates
+            CampaignBatchType.Day2 => _companyDb.EmailTemplates
                 .Where(t => t.IsActive && t.IsFollowUp && t.Stage == LeadStage.Cold && (t.ProductId == lead.ProductId || t.ProductId == null))
                 .OrderByDescending(t => t.ProductId == lead.ProductId)
                 .ThenByDescending(t => t.UpdatedAt ?? t.CreatedAt)
                 .FirstOrDefaultAsync(cancellationToken),
-            CampaignBatchType.Day3 => db.EmailTemplates
+            CampaignBatchType.Day3 => _companyDb.EmailTemplates
                 .Where(t => t.IsActive && !t.IsFollowUp && t.Stage == lead.Stage && (t.ProductId == lead.ProductId || t.ProductId == null))
                 .OrderByDescending(t => t.ProductId == lead.ProductId)
                 .ThenByDescending(t => t.UpdatedAt ?? t.CreatedAt)
                 .FirstOrDefaultAsync(cancellationToken),
-            CampaignBatchType.Day4 => db.EmailTemplates
+            CampaignBatchType.Day4 => _companyDb.EmailTemplates
                 .Where(t => t.IsActive && t.IsFollowUp && (t.Stage == LeadStage.Mql || t.Stage == LeadStage.Hot) && (t.ProductId == lead.ProductId || t.ProductId == null))
                 .OrderByDescending(t => t.ProductId == lead.ProductId)
                 .ThenByDescending(t => t.UpdatedAt ?? t.CreatedAt)
@@ -180,15 +212,15 @@ public class BatchRepository(LeadScoringDbContext db) : IBatchRepository
 
     public async Task<BatchLog> CreateBatchLogAsync(BatchLog batchLog, CancellationToken cancellationToken)
     {
-        await db.BatchLogs.AddAsync(batchLog, cancellationToken);
-        await db.SaveChangesAsync(cancellationToken);
+        await tenantDb.BatchLogs.AddAsync(batchLog, cancellationToken);
+        await tenantDb.SaveChangesAsync(cancellationToken);
         return batchLog;
     }
 
     public Task<List<BatchLog>> GetRecentBatchLogsAsync(int take, CancellationToken cancellationToken)
     {
         take = Math.Clamp(take, 1, 500);
-        return db.BatchLogs
+        return tenantDb.BatchLogs
             .AsNoTracking()
             .OrderByDescending(x => x.BatchId)
             .Take(take)
@@ -204,7 +236,7 @@ public class BatchRepository(LeadScoringDbContext db) : IBatchRepository
         int stage4Count,
         CancellationToken cancellationToken)
     {
-        var entity = await db.AdminBatchReports.FirstOrDefaultAsync(x => x.Email == email, cancellationToken);
+        var entity = await tenantDb.AdminBatchReports.FirstOrDefaultAsync(x => x.Email == email, cancellationToken);
         var utcNow = DateTime.UtcNow;
         if (entity is null)
         {
@@ -213,7 +245,7 @@ public class BatchRepository(LeadScoringDbContext db) : IBatchRepository
                 Email = email,
                 CreatedDate = utcNow
             };
-            await db.AdminBatchReports.AddAsync(entity, cancellationToken);
+            await tenantDb.AdminBatchReports.AddAsync(entity, cancellationToken);
         }
 
         entity.UpdatedDate = utcNow;
@@ -224,13 +256,13 @@ public class BatchRepository(LeadScoringDbContext db) : IBatchRepository
         entity.Stage4Count = stage4Count;
         entity.BatchDailyCount++;
 
-        await db.SaveChangesAsync(cancellationToken);
+        await tenantDb.SaveChangesAsync(cancellationToken);
         return entity;
     }
 
     public Task<List<string>> GetAdminReportEmailsAsync(CancellationToken cancellationToken)
     {
-        return db.AdminBatchReports
+        return tenantDb.AdminBatchReports
             .AsNoTracking()
             .Where(x => x.Email != null && x.Email != string.Empty)
             .Select(x => x.Email)
@@ -239,21 +271,21 @@ public class BatchRepository(LeadScoringDbContext db) : IBatchRepository
 
     public Task<List<BatchConfig>> GetActiveConfigsAsync(CancellationToken cancellationToken)
     {
-        return db.BatchConfigs
+        return tenantDb.BatchConfigs
             .Where(x => x.IsActive)
             .ToListAsync(cancellationToken);
     }
 
     public Task<Batch?> GetBatchByIdAsync(long batchId, CancellationToken cancellationToken)
     {
-        return db.Batches
+        return tenantDb.Batches
             .Include(x => x.BatchLeads)
             .FirstOrDefaultAsync(x => x.BatchId == batchId, cancellationToken);
     }
 
-    public Task<List<Lead>> GetLeadsAfterAsync(int productId, LeadStage stage, DateTime sinceUtc, CancellationToken cancellationToken)
+    public async Task<List<Lead>> GetLeadsAfterAsync(int productId, LeadStage stage, DateTime sinceUtc, CancellationToken cancellationToken)
     {
-        return db.Leads
+        return await (await AccessibleLeadsAsync(cancellationToken).ConfigureAwait(false))
             .AsNoTracking()
             .Where(x =>
                 x.ProductId == productId &&
@@ -263,60 +295,60 @@ public class BatchRepository(LeadScoringDbContext db) : IBatchRepository
                     (x.LastScoredAtUtc.HasValue && x.LastScoredAtUtc.Value > sinceUtc)
                 ))
             .OrderBy(x => x.LastScoredAtUtc ?? x.CreatedAtUtc)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<Batch> CreateBatchAsync(Batch batch, CancellationToken cancellationToken)
     {
-        await db.Batches.AddAsync(batch, cancellationToken);
-        await db.SaveChangesAsync(cancellationToken);
+        await tenantDb.Batches.AddAsync(batch, cancellationToken);
+        await tenantDb.SaveChangesAsync(cancellationToken);
         return batch;
     }
 
     public async Task CreateBatchLeadsAsync(IEnumerable<BatchLead> batchLeads, CancellationToken cancellationToken)
     {
-        await db.BatchLeads.AddRangeAsync(batchLeads, cancellationToken);
-        await db.SaveChangesAsync(cancellationToken);
+        await tenantDb.BatchLeads.AddRangeAsync(batchLeads, cancellationToken);
+        await tenantDb.SaveChangesAsync(cancellationToken);
     }
 
     public Task<List<BatchLead>> GetFailedBatchLeadsAsync(long batchId, CancellationToken cancellationToken)
     {
-        return db.BatchLeads
+        return tenantDb.BatchLeads
             .Where(x => x.BatchId == batchId && x.Status == BatchLeadStatus.Failed)
             .ToListAsync(cancellationToken);
     }
 
-    public Task<Lead?> GetLeadForUpdateAsync(Guid leadId, CancellationToken cancellationToken)
+    public async Task<Lead?> GetLeadForUpdateAsync(Guid leadId, CancellationToken cancellationToken)
     {
-        return db.Leads.FirstOrDefaultAsync(x => x.Id == leadId, cancellationToken);
+        return await (await AccessibleLeadsAsync(cancellationToken).ConfigureAwait(false))
+            .FirstOrDefaultAsync(x => x.Id == leadId, cancellationToken).ConfigureAwait(false);
     }
 
-    public Task<Lead?> GetLeadByEmailAsync(string email, CancellationToken cancellationToken)
+    public async Task<Lead?> GetLeadByEmailAsync(string email, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(email))
         {
-            return Task.FromResult<Lead?>(null);
+            return null;
         }
 
         var e = email.Trim().ToLowerInvariant();
-        return db.Leads
+        return await (await AccessibleLeadsAsync(cancellationToken).ConfigureAwait(false))
             .AsNoTracking()
-            .FirstOrDefaultAsync(x => x.Email.ToLower() == e, cancellationToken);
+            .FirstOrDefaultAsync(x => x.Email.ToLower() == e, cancellationToken).ConfigureAwait(false);
     }
 
-    public Task<int?> GetAnyLeadProductIdAsync(CancellationToken cancellationToken)
+    public async Task<int?> GetAnyLeadProductIdAsync(CancellationToken cancellationToken)
     {
-        return db.Leads
+        return await (await AccessibleLeadsAsync(cancellationToken).ConfigureAwait(false))
             .AsNoTracking()
             .Where(l => l.ProductId != null)
             .Select(l => l.ProductId)
-            .FirstOrDefaultAsync(cancellationToken);
+            .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
     }
-
 
     public Task<EmailTemplate?> GetActiveTemplateForStageAsync(LeadStage stage, int? productId, CancellationToken cancellationToken)
     {
-        return db.EmailTemplates
+        return _companyDb.EmailTemplates
             .Where(t =>
                 t.IsActive &&
                 !t.IsFollowUp &&
@@ -330,11 +362,12 @@ public class BatchRepository(LeadScoringDbContext db) : IBatchRepository
 
     public async Task AddEventAsync(LeadEvent leadEvent, CancellationToken cancellationToken)
     {
-        await db.Events.AddAsync(leadEvent, cancellationToken);
+        await _companyDb.Events.AddAsync(leadEvent, cancellationToken);
     }
 
-    public Task SaveChangesAsync(CancellationToken cancellationToken)
+    public async Task SaveChangesAsync(CancellationToken cancellationToken)
     {
-        return db.SaveChangesAsync(cancellationToken);
+        await _companyDb.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        await tenantDb.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 }

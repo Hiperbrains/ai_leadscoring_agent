@@ -16,7 +16,8 @@ public class BatchProcessingService(
     IConfiguration configuration,
     ILogger<BatchProcessingService> logger,
     IServiceScopeFactory scopeFactory,
-    ManualBatchProgressStore progressStore) : IBatchProcessingService
+    ManualBatchProgressStore progressStore,
+    ITenantLeadScope tenantLeadScope) : IBatchProcessingService
 {
     private sealed record SentEmailSample(int TemplateId, bool IsFollowUp, string Subject, string HtmlBody, string ExampleRecipientEmail);
 
@@ -95,8 +96,10 @@ public class BatchProcessingService(
         // Sequential: eligible query and aggregates share one scoped DbContext.
         var eligibleLeads = await GetLeadsForBatchTypeAsync(batchType, nowUtc, cancellationToken).ConfigureAwait(false);
         var agg = await batchRepository.GetLeadAggregatesForPreviewAsync(nowUtc, cancellationToken).ConfigureAwait(false);
+        var companyName = await tenantLeadScope.ResolveCompanyNameAsync(cancellationToken).ConfigureAwait(false);
 
         return new BatchPreviewResultDto(
+            companyName,
             batchType,
             agg.TotalLeads,
             agg.Stage0Count,

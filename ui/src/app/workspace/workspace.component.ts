@@ -1646,6 +1646,8 @@ type ManualScope =
   | 'DidNotOpenEmail';
 
 interface BatchPreviewResult {
+  /** Signed-in tenant / workspace company label (camelCase JSON). Optional for older backends. */
+  companyName?: string;
   /** API may serialize `CampaignBatchType` as a number (1–4). */
   batchType: ManualBatchType | number;
   totalLeadsCount: number;
