@@ -135,6 +135,18 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
   manualLoading = false;
   manualError = '';
 
+  /** Template type codes for Configure send (order matches UX labels). */
+  readonly manualBatchTemplateOptions: ManualBatchType[] = [
+    'Day1',
+    'Warm',
+    'Mql',
+    'Hot',
+    'Day2',
+    'WarmFollowUp',
+    'MqlFollowUp',
+    'HotFollowUp'
+  ];
+
   /** Spinner state: which slice is loading depends on the active tab. */
   get loading(): boolean {
     if (this.activeTab === 'dashboard') {

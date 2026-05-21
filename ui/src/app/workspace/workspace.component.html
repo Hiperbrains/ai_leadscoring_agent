@@ -787,18 +787,9 @@
   <app-card heading="Configure send"
     subheading="Choose the email template type and audience segment, confirm how many recipients to include, then send.">
     <div class="manual-batch-field manual-batch-field--type">
-      <label for="mbType">Template type</label>
-      <select id="mbType" class="ws-select ws-select--batch-type" [(ngModel)]="manualBatchType"
-        (ngModelChange)="onManualBatchTypeChange()" name="mbType">
-        <option [ngValue]="'Day1'">COLD</option>
-        <option [ngValue]="'Warm'">WARM</option>
-        <option [ngValue]="'Mql'">MQL</option>
-        <option [ngValue]="'Hot'">HOT</option>
-        <option [ngValue]="'Day2'">COLD FOLLOWUP</option>
-        <option [ngValue]="'WarmFollowUp'">WARM FOLLOWUP</option>
-        <option [ngValue]="'MqlFollowUp'">MQL FOLLOWUP</option>
-        <option [ngValue]="'HotFollowUp'">HOT FOLLOWUP</option>
-      </select>
+      <app-combobox class="manual-batch-type-combobox" label="Template type" name="mbType"
+        [options]="manualBatchTemplateOptions" [allowCustomValue]="false" [optionLabelFn]="manualBatchTypeLabel"
+        [(ngModel)]="manualBatchType" (ngModelChange)="onManualBatchTypeChange()" />
       <p class="caption-muted">Recipient counts reload when this changes.</p>
     </div>
 

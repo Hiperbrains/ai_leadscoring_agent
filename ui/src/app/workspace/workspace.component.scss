@@ -961,19 +961,16 @@
   flex: 1 1 18rem;
 }
 
+.manual-batch-field--type .manual-batch-type-combobox {
+  width: 100%;
+  max-width: 28rem;
+}
+
 .manual-batch-field label {
   font-size: var(--text-sm);
   font-weight: var(--font-weight-semibold);
   line-height: var(--leading-snug);
   color: var(--color-text-heading);
-}
-
-.ws-select--batch-type {
-  width: 100%;
-  max-width: 28rem;
-  min-height: 2.75rem;
-  padding-top: 0;
-  padding-bottom: 0;
 }
 
 .manual-batch-live-progress {
