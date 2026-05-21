@@ -56,8 +56,8 @@ public class TenantLeadScope(
         var normalizedCompany = companyName.Trim();
         return leads.Where(l =>
             l.ProductId == ScopedProductId
-            && l.CompanyId != null
-            && EF.Functions.ILike(l.CompanyId, normalizedCompany));
+            && l.CompanyName != null
+            && EF.Functions.ILike(l.CompanyName, normalizedCompany));
     }
 
     private async Task<(string CompanyName, string DatabaseName)> ResolveUserTenantAsync(

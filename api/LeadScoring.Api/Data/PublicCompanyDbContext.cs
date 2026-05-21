@@ -19,7 +19,7 @@ public class PublicCompanyDbContext(DbContextOptions<PublicCompanyDbContext> opt
         {
             entity.ToTable("Leads", "public");
             entity.HasKey(x => x.Id);
-            entity.Property(x => x.CompanyId).HasColumnName("CompanyId");
+            entity.Property(x => x.CompanyName).HasColumnName("CompanyName");
             entity.HasIndex(x => x.Email).IsUnique();
         });
 

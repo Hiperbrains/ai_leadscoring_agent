@@ -10,7 +10,7 @@ public class Lead
     public EventSource? FirstSource { get; set; }
     public EventSource? LastSource { get; set; }
     public int? ProductId { get; set; }
-    public string? CompanyId { get; set; }
+    public string? CompanyName { get; set; }
     public bool WelcomeEmailSent { get; set; }
     public int Score { get; set; }
     public LeadStage Stage { get; set; } = LeadStage.Cold;
