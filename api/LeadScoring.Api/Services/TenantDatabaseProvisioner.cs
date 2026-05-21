@@ -221,6 +221,7 @@ public class TenantDatabaseProvisioner(IConfiguration configuration, ILogger<Ten
                   AND t."ProductName" = p."ProductName"
                   AND t."ProductId" = p."ProductId"
               )
+            ON CONFLICT ("Id") DO NOTHING
             """,
             conn);
         migrateCmd.Parameters.AddWithValue("schema", schemaName);
@@ -239,6 +240,14 @@ public class TenantDatabaseProvisioner(IConfiguration configuration, ILogger<Ten
         catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedTable)
         {
             logger.LogDebug(ex, "Skipping public config migration for {SchemaName}; tenant table not ready.", schemaName);
+        }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
+        {
+            // Rare race or legacy overlap; PK / unique guards should make this benign with ON CONFLICT — log at debug.
+            logger.LogDebug(
+                ex,
+                "Skipping duplicate company product config during public→tenant migration for {SchemaName}.",
+                schemaName);
         }
     }
 
