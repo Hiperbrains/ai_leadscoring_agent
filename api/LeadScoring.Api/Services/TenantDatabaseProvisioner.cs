@@ -78,11 +78,9 @@ public class TenantDatabaseProvisioner(IConfiguration configuration, ILogger<Ten
 
         await EnsureSchemaExistsAsync(masterConnection, schemaName, cancellationToken);
 
-        if (!await SchemaHasCoreTablesAsync(masterConnection, schemaName, cancellationToken))
-        {
-            logger.LogWarning("Tenant schema {SchemaName} is missing tables; applying migrations.", schemaName);
-            await ApplyTenantMigrationsAsync(masterConnection, schemaName, cancellationToken);
-        }
+        // Existing tenants satisfied SchemaHasCoreTablesAsync but skipped MigrateAsync forever, leaving
+        // schema behind the model (e.g. CompanyId vs CompanyName on Leads). Always apply pending migrations.
+        await ApplyTenantMigrationsAsync(masterConnection, schemaName, cancellationToken);
 
         if (!await SchemaHasCoreTablesAsync(masterConnection, schemaName, cancellationToken))
         {
