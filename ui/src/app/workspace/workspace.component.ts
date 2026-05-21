@@ -48,10 +48,18 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
   /** Debounced reload for company-config list search (ms). */
   private static readonly companyConfigFilterDebounceMs = 320;
   private companyConfigFilterSearchTimer?: ReturnType<typeof setTimeout>;
+  /** Set after the first `syncTabFromRoute` applies so identical tab route events can be skipped. */
+  private workspaceRouteSynced = false;
   apiBase = this.resolveApiBase();
-  loading = false;
   error = '';
-  data?: DashboardResponse;
+  /** KPIs and charts only (GET /api/dashboard/summary). */
+  dashboardSummary?: DashboardSummaryResponse;
+  /** Full lead rows for the Leads table (GET /api/dashboard/leads). */
+  dashboardLeads: DashboardLead[] = [];
+  /** Set after the first successful leads fetch (even when the list is empty). */
+  dashboardLeadsLoaded = false;
+  loadingSummary = false;
+  loadingLeads = false;
   selectedFile?: File;
   source = '';
   importMessage = '';
@@ -120,6 +128,33 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
   private manualRunPollTimer?: ReturnType<typeof setInterval>;
   manualLoading = false;
   manualError = '';
+
+  /** Spinner state: which slice is loading depends on the active tab. */
+  get loading(): boolean {
+    if (this.activeTab === 'dashboard') {
+      return this.loadingSummary;
+    }
+    if (this.activeTab === 'leads') {
+      return this.loadingLeads;
+    }
+    return false;
+  }
+
+  /** Merges summary + leads for templates, filters, and exports. */
+  get data(): DashboardResponse | undefined {
+    if (!this.dashboardSummary && !this.dashboardLeadsLoaded) {
+      return undefined;
+    }
+    const s = this.dashboardSummary;
+    return {
+      totalLeads: s?.totalLeads ?? this.dashboardLeads.length,
+      signedUpCount: s?.signedUpCount ?? 0,
+      stageCounts: s?.stageCounts ?? { Cold: 0, Warm: 0, Mql: 0, Hot: 0 },
+      eventsByType: s?.eventsByType ?? { Open: 0, EmailClick: 0, WebsiteActivity: 0 },
+      firstSourceCounts: s?.firstSourceCounts ?? {},
+      leads: this.dashboardLeads
+    };
+  }
 
   /** Selected lead bucket for Manual Batch. Changing scope resets leads-to-process to the full bucket size. */
   get manualScope(): ManualScope {
@@ -220,9 +255,6 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
   ngOnInit(): void {
     this.syncTabFromRoute();
     this.router.events.pipe(filter((e): e is NavigationEnd => e instanceof NavigationEnd)).subscribe(() => this.syncTabFromRoute());
-    this.loadDashboard();
-    this.loadCompanyConfigs();
-    this.refreshCompanyProductIndex();
   }
 
   /** Maps API stage enums to badge token keys (CSS classes). */
@@ -281,22 +313,28 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
       r = r.firstChild;
     }
     const tab = r?.snapshot.data['workspaceTab'] as LeftTab | undefined;
-    if (!tab || tab === this.activeTab) {
+    if (!tab) {
       return;
     }
+    const duplicateNavSameTab = tab === this.activeTab && this.workspaceRouteSynced;
+    if (duplicateNavSameTab) {
+      return;
+    }
+    this.workspaceRouteSynced = true;
+
     if (this.activeTab === 'company-config' && tab !== 'company-config') {
       this.companyConfigDeleteTarget = null;
       this.closeCompanyConfigEditModal();
     }
     this.activeTab = tab;
-    if ((tab === 'dashboard' || tab === 'leads') && !this.data && !this.loading) {
-      this.loadDashboard();
+    if (tab === 'dashboard' && !this.dashboardSummary && !this.loadingSummary) {
+      this.loadDashboardSummary();
     }
-    if (tab === 'company-config' && this.companyConfigs.length === 0 && !this.configLoading) {
-      this.loadCompanyConfigs();
+    if (tab === 'leads' && !this.dashboardLeadsLoaded && !this.loadingLeads) {
+      this.loadDashboardLeads();
     }
     if (tab === 'company-config') {
-      this.refreshCompanyProductIndex();
+      this.reloadCompanyProductViews();
     }
     if (tab === 'manual-batch' && !this.manualLoading) {
       this.previewManualBatch();
@@ -419,17 +457,81 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
   }
 
   loadDashboard(): void {
-    this.loading = true;
+    if (this.activeTab === 'dashboard') {
+      this.loadDashboardSummary();
+    } else if (this.activeTab === 'leads') {
+      this.loadDashboardLeads();
+    } else {
+      this.loadDashboardSummary();
+      this.loadDashboardLeads();
+    }
+  }
+
+  /** KPIs and charts only — used on the Dashboard tab. */
+  loadDashboardSummary(): void {
+    if (this.loadingSummary) {
+      return;
+    }
+    this.loadingSummary = true;
     this.error = '';
-    this.http.get<DashboardResponse>(`${this.apiBase}/api/dashboard`).subscribe({
+    this.http.get<DashboardSummaryResponse>(`${this.apiBase}/api/dashboard/summary`).subscribe({
       next: (value) => {
-        this.data = value;
+        this.dashboardSummary = value;
         this.currentPage = 1;
-        this.loading = false;
+        this.loadingSummary = false;
       },
       error: (err: unknown) => {
-        this.loading = false;
-        this.error = this.formatApiError(err, `Failed to load dashboard from ${this.apiBase}.`);
+        this.loadingSummary = false;
+        this.error = this.formatApiError(err, `Failed to load dashboard metrics from ${this.apiBase}.`);
+      }
+    });
+  }
+
+  /** Full lead list — used on the Leads tab (large response). */
+  loadDashboardLeads(): void {
+    if (this.loadingLeads) {
+      return;
+    }
+    this.loadingLeads = true;
+    this.error = '';
+    this.http.get<{ leads: DashboardLead[] }>(`${this.apiBase}/api/dashboard/leads`).subscribe({
+      next: (res) => {
+        this.dashboardLeads = res.leads ?? [];
+        this.dashboardLeadsLoaded = true;
+        this.currentPage = 1;
+        this.loadingLeads = false;
+      },
+      error: (err: unknown) => {
+        this.loadingLeads = false;
+        this.error = this.formatApiError(err, `Failed to load leads from ${this.apiBase}.`);
+      }
+    });
+  }
+
+  private refreshDashboardAfterImport(): void {
+    this.error = '';
+    this.loadingSummary = true;
+    this.loadingLeads = true;
+    this.http.get<DashboardSummaryResponse>(`${this.apiBase}/api/dashboard/summary`).subscribe({
+      next: (value) => {
+        this.dashboardSummary = value;
+        this.currentPage = 1;
+        this.loadingSummary = false;
+      },
+      error: (err: unknown) => {
+        this.loadingSummary = false;
+        this.error = this.formatApiError(err, `Failed to load dashboard metrics from ${this.apiBase}.`);
+      }
+    });
+    this.http.get<{ leads: DashboardLead[] }>(`${this.apiBase}/api/dashboard/leads`).subscribe({
+      next: (res) => {
+        this.dashboardLeads = res.leads ?? [];
+        this.dashboardLeadsLoaded = true;
+        this.loadingLeads = false;
+      },
+      error: (err: unknown) => {
+        this.loadingLeads = false;
+        this.error = this.formatApiError(err, `Failed to load leads from ${this.apiBase}.`);
       }
     });
   }
@@ -463,7 +565,7 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
       next: (result) => {
         this.importing = false;
         this.importMessage = `Processed ${result.processed}. Imported ${result.imported}, updated ${result.updated}, skipped ${result.skipped}.`;
-        this.loadDashboard();
+        this.refreshDashboardAfterImport();
       },
       error: () => {
         this.importing = false;
@@ -757,58 +859,91 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
   }
 
   downloadPdfReport(): void {
-    if (!this.data || this.data.leads.length === 0) {
+    const writePdf = (): void => {
+      const snapshot = this.data;
+      if (!snapshot || snapshot.leads.length === 0) {
+        this.error = 'No leads available to generate report.';
+        return;
+      }
+
+      this.error = '';
+      const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
+      const generatedAt = new Date();
+      doc.setFontSize(16);
+      doc.text('Lead Scoring Report', 40, 40);
+      doc.setFontSize(10);
+      doc.text(`Generated: ${generatedAt.toLocaleString()}`, 40, 58);
+      doc.text(`Total Leads: ${snapshot.totalLeads}`, 40, 74);
+
+      const body = snapshot.leads.map((lead) => [
+        lead.email,
+        String(lead.score),
+        lead.stage,
+        new Date(lead.lastActivityUtc).toLocaleString(),
+        lead.lastScoredAtUtc ? new Date(lead.lastScoredAtUtc).toLocaleString() : '-'
+      ]);
+
+      autoTable(doc, {
+        startY: 90,
+        head: [['Email', 'Score', 'Stage', 'Last Activity', 'Last Scored']],
+        body,
+        styles: {
+          fontSize: 9,
+          cellPadding: 6
+        },
+        headStyles: {
+          fillColor: [173, 216, 230],
+          textColor: [17, 24, 39],
+          fontStyle: 'bold'
+        },
+        didParseCell: (hookData) => {
+          if (hookData.section === 'body' && hookData.column.index === 2) {
+            const stage = String(hookData.cell.raw);
+            if (stage === 'Cold') {
+              hookData.cell.styles.textColor = [30, 64, 175];
+            } else if (stage === 'Warm') {
+              hookData.cell.styles.textColor = [180, 83, 9];
+            } else if (stage === 'Mql') {
+              hookData.cell.styles.textColor = [3, 105, 161];
+            } else if (stage === 'Hot') {
+              hookData.cell.styles.textColor = [185, 28, 28];
+            }
+          }
+        }
+      });
+
+      const filename = `lead-scoring-report-${generatedAt.toISOString().slice(0, 10)}.pdf`;
+      doc.save(filename);
+    };
+
+    if (this.dashboardLeadsLoaded && this.dashboardLeads.length > 0) {
+      writePdf();
+      return;
+    }
+
+    const totalHint = this.dashboardSummary?.totalLeads ?? 0;
+    if (totalHint === 0) {
       this.error = 'No leads available to generate report.';
       return;
     }
 
-    const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
-    const generatedAt = new Date();
-    doc.setFontSize(16);
-    doc.text('Lead Scoring Report', 40, 40);
-    doc.setFontSize(10);
-    doc.text(`Generated: ${generatedAt.toLocaleString()}`, 40, 58);
-    doc.text(`Total Leads: ${this.data.totalLeads}`, 40, 74);
-
-    const body = this.data.leads.map((lead) => [
-      lead.email,
-      String(lead.score),
-      lead.stage,
-      new Date(lead.lastActivityUtc).toLocaleString(),
-      lead.lastScoredAtUtc ? new Date(lead.lastScoredAtUtc).toLocaleString() : '-'
-    ]);
-
-    autoTable(doc, {
-      startY: 90,
-      head: [['Email', 'Score', 'Stage', 'Last Activity', 'Last Scored']],
-      body,
-      styles: {
-        fontSize: 9,
-        cellPadding: 6
+    if (this.loadingLeads) {
+      return;
+    }
+    this.loadingLeads = true;
+    this.error = '';
+    this.http.get<{ leads: DashboardLead[] }>(`${this.apiBase}/api/dashboard/leads`).subscribe({
+      next: (res) => {
+        this.dashboardLeads = res.leads ?? [];
+        this.dashboardLeadsLoaded = true;
+        this.loadingLeads = false;
+        writePdf();
       },
-      headStyles: {
-        fillColor: [173, 216, 230],
-        textColor: [17, 24, 39],
-        fontStyle: 'bold'
-      },
-      didParseCell: (hookData) => {
-        if (hookData.section === 'body' && hookData.column.index === 2) {
-          const stage = String(hookData.cell.raw);
-          if (stage === 'Cold') {
-            hookData.cell.styles.textColor = [30, 64, 175];
-          } else if (stage === 'Warm') {
-            hookData.cell.styles.textColor = [180, 83, 9];
-          } else if (stage === 'Mql') {
-            hookData.cell.styles.textColor = [3, 105, 161];
-          } else if (stage === 'Hot') {
-            hookData.cell.styles.textColor = [185, 28, 28];
-          }
-        }
+      error: (err: unknown) => {
+        this.loadingLeads = false;
+        this.error = this.formatApiError(err, `Failed to load leads from ${this.apiBase}.`);
       }
     });
-
-    const filename = `lead-scoring-report-${generatedAt.toISOString().slice(0, 10)}.pdf`;
-    doc.save(filename);
   }
 
   addEventItem(): void {
@@ -881,8 +1016,7 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
         this.savingConfig = false;
         this.configSuccess = 'Company product config saved.';
         this.resetCompanyConfigForm(companyName);
-        this.loadCompanyConfigs();
-        this.refreshCompanyProductIndex();
+        this.reloadCompanyProductViews();
       },
       error: () => {
         this.savingConfig = false;
@@ -943,8 +1077,7 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
         this.configSuccess = 'Company product config updated.';
         this.configError = '';
         this.closeCompanyConfigEditModal();
-        this.loadCompanyConfigs();
-        this.refreshCompanyProductIndex();
+        this.reloadCompanyProductViews();
       },
       error: () => {
         this.savingEditModal = false;
@@ -1015,8 +1148,7 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
           if (this.companyConfigEditModalId === config.id) {
             this.closeCompanyConfigEditModal();
           }
-          this.loadCompanyConfigs();
-          this.refreshCompanyProductIndex();
+          this.reloadCompanyProductViews();
         },
         error: () => {
           this.configError = 'Failed to delete configuration.';
@@ -1043,6 +1175,9 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
       next: (records) => {
         this.configLoading = false;
         this.companyConfigs = records;
+        if (!filter) {
+          this.companyProductAll = records;
+        }
       },
       error: () => {
         this.configLoading = false;
@@ -1061,6 +1196,14 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
       productName: '',
       items: [{ eventName: '', score: '' }]
     };
+  }
+
+  /** Reload company-config grid; when a name filter is active, also fetch the full list for combobox suggestions (one extra GET). */
+  private reloadCompanyProductViews(): void {
+    this.loadCompanyConfigs();
+    if (this.companyNameFilter.trim()) {
+      this.refreshCompanyProductIndex();
+    }
   }
 
   /** Full config list for combobox suggestions (unaffected by table filter). */
@@ -1433,6 +1576,15 @@ interface DashboardLead {
   profileCompletion: boolean;
   selectedPlan?: string | null;
   planRenewalDate?: string | null;
+}
+
+interface DashboardSummaryResponse {
+  companyName?: string;
+  totalLeads: number;
+  signedUpCount: number;
+  stageCounts: Record<StageName, number>;
+  eventsByType: Record<EventName, number>;
+  firstSourceCounts: Record<string, number>;
 }
 
 interface DashboardResponse {

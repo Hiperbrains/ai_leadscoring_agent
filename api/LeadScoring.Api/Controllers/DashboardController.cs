@@ -17,16 +17,117 @@ public class DashboardController(
     ITenantContext tenantContext,
     ITenantLeadScope tenantLeadScope) : ControllerBase
 {
-    [HttpGet]
-    public async Task<IActionResult> Get(CancellationToken cancellationToken)
+    /// <summary>KPIs and chart inputs only (no per-lead rows).</summary>
+    [HttpGet("summary")]
+    public async Task<IActionResult> GetSummary(CancellationToken cancellationToken)
     {
         tenantContext.RequireTenant();
-        const int nextEmailDelayHours = 24;
-
         await tenantLeadScope.EnsureTenantContextMatchesUserAsync(cancellationToken);
         var companyName = await tenantLeadScope.ResolveCompanyNameAsync(cancellationToken);
         var db = companyLeadDb.GetDbContext();
         var scopedLeads = tenantLeadScope.ApplyScope(db.Leads, companyName);
+
+        var s = await BuildSummaryPayloadAsync(db, scopedLeads, companyName, cancellationToken);
+        return Ok(new
+        {
+            companyName = s.companyName,
+            totalLeads = s.totalLeads,
+            signedUpCount = s.signedUpCount,
+            stageCounts = s.stageCounts,
+            eventsByType = s.eventsByType,
+            firstSourceCounts = s.firstSourceCounts
+        });
+    }
+
+    /// <summary>Full lead rows for the workspace Leads table (heavy query).</summary>
+    [HttpGet("leads")]
+    public async Task<IActionResult> GetLeads(CancellationToken cancellationToken)
+    {
+        tenantContext.RequireTenant();
+        await tenantLeadScope.EnsureTenantContextMatchesUserAsync(cancellationToken);
+        var companyName = await tenantLeadScope.ResolveCompanyNameAsync(cancellationToken);
+        var db = companyLeadDb.GetDbContext();
+        var scopedLeads = tenantLeadScope.ApplyScope(db.Leads, companyName);
+
+        var leads = await QueryLeadRowsAsync(db, scopedLeads, cancellationToken);
+        return Ok(new { leads });
+    }
+
+    /// <summary>Full dashboard payload (summary + all leads). Prefer /summary and /leads for smaller responses.</summary>
+    [HttpGet]
+    public async Task<IActionResult> Get(CancellationToken cancellationToken)
+    {
+        tenantContext.RequireTenant();
+        await tenantLeadScope.EnsureTenantContextMatchesUserAsync(cancellationToken);
+        var companyName = await tenantLeadScope.ResolveCompanyNameAsync(cancellationToken);
+        var db = companyLeadDb.GetDbContext();
+        var scopedLeads = tenantLeadScope.ApplyScope(db.Leads, companyName);
+
+        var summary = await BuildSummaryPayloadAsync(db, scopedLeads, companyName, cancellationToken);
+        var leads = await QueryLeadRowsAsync(db, scopedLeads, cancellationToken);
+
+        return Ok(new
+        {
+            summary.companyName,
+            summary.totalLeads,
+            summary.signedUpCount,
+            summary.stageCounts,
+            summary.eventsByType,
+            firstSourceCounts = summary.firstSourceCounts,
+            leads
+        });
+    }
+
+    private static async Task<(
+        string companyName,
+        int totalLeads,
+        int signedUpCount,
+        Dictionary<string, int> stageCounts,
+        Dictionary<string, int> eventsByType,
+        Dictionary<string, int> firstSourceCounts)> BuildSummaryPayloadAsync(
+        PublicCompanyDbContext db,
+        IQueryable<Lead> scopedLeads,
+        string companyName,
+        CancellationToken cancellationToken)
+    {
+        var totalLeads = await scopedLeads.CountAsync(cancellationToken);
+        var signedUpCount = await scopedLeads.CountAsync(l => l.SignupCompleted, cancellationToken);
+
+        var stageCountsList = await scopedLeads
+            .GroupBy(l => l.Stage)
+            .Select(g => new { Stage = g.Key.ToString(), Count = g.Count() })
+            .ToListAsync(cancellationToken);
+        var stageCounts = stageCountsList.ToDictionary(x => x.Stage, x => x.Count);
+
+        var scopedLeadIds = scopedLeads.Select(l => l.Id);
+        var eventsByType = await db.Events
+            .Where(e => e.LeadId != null && scopedLeadIds.Contains(e.LeadId.Value))
+            .GroupBy(e => e.Type)
+            .Select(g => new { Type = g.Key.ToString(), Count = g.Count() })
+            .ToDictionaryAsync(k => k.Type, v => v.Count, cancellationToken);
+
+        var firstSourceCounts = await scopedLeads
+            .AsNoTracking()
+            .GroupBy(l => l.FirstSource)
+            .Select(g => new { Source = g.Key, Count = g.Count() })
+            .ToListAsync(cancellationToken);
+
+        var firstSourceBuckets = firstSourceCounts
+            .GroupBy(x => (x.Source ?? EventSource.Unknown).ToString(), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                g => g.Key,
+                g => g.Sum(x => x.Count),
+                StringComparer.OrdinalIgnoreCase);
+
+        return (companyName, totalLeads, signedUpCount, stageCounts, eventsByType, firstSourceBuckets);
+    }
+
+    private static async Task<List<LeadDashboardDto>> QueryLeadRowsAsync(
+        PublicCompanyDbContext db,
+        IQueryable<Lead> scopedLeads,
+        CancellationToken cancellationToken)
+    {
+        const int nextEmailDelayHours = 24;
 
         var leads = await (
             from l in scopedLeads
@@ -99,44 +200,7 @@ public class DashboardController(
                 l.PlanRenewalDate))
             .ToListAsync(cancellationToken);
 
-        leads = await ApplyCampaignMetadataFallbackAsync(db, leads);
-
-        var scopedLeadIds = scopedLeads.Select(l => l.Id);
-
-        var eventsByType = await db.Events
-            .Where(e => e.LeadId != null && scopedLeadIds.Contains(e.LeadId.Value))
-            .GroupBy(e => e.Type)
-            .Select(g => new { Type = g.Key.ToString(), Count = g.Count() })
-            .ToDictionaryAsync(k => k.Type, v => v.Count, cancellationToken);
-
-        var stageCounts = leads
-            .GroupBy(l => l.Stage)
-            .ToDictionary(g => g.Key, g => g.Count());
-
-        var signedUpCount = leads.Count(x => x.SignupCompleted);
-        var firstSourceCounts = await scopedLeads
-            .AsNoTracking()
-            .GroupBy(l => l.FirstSource)
-            .Select(g => new { Source = g.Key, Count = g.Count() })
-            .ToListAsync(cancellationToken);
-
-        var firstSourceBuckets = firstSourceCounts
-            .GroupBy(x => (x.Source ?? EventSource.Unknown).ToString(), StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(
-                g => g.Key,
-                g => g.Sum(x => x.Count),
-                StringComparer.OrdinalIgnoreCase);
-
-        return Ok(new
-        {
-            companyName,
-            totalLeads = leads.Count,
-            signedUpCount,
-            stageCounts,
-            eventsByType,
-            firstSourceCounts = firstSourceBuckets,
-            leads
-        });
+        return await ApplyCampaignMetadataFallbackAsync(db, leads);
     }
 
     private static async Task<List<LeadDashboardDto>> ApplyCampaignMetadataFallbackAsync(
