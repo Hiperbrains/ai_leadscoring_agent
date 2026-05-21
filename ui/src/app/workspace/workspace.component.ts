@@ -16,6 +16,8 @@ import { EventsBarChartComponent } from '../shared/components/dashboard-charts/e
 import { SourceBarChartComponent } from '../shared/components/dashboard-charts/source-bar-chart.component';
 import { StagePieChartComponent } from '../shared/components/dashboard-charts/stage-pie-chart.component';
 import { WorkspaceTopBarComponent } from './workspace-top-bar/workspace-top-bar.component';
+import { WEBSITE_EMBED_SCRIPT } from '../shared/constants/website-embed-script';
+import { AuthService } from '../shared/services/auth.service';
 
 @Component({
   selector: 'app-workspace',
@@ -44,6 +46,7 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
   private readonly http = inject(HttpClient);
   private readonly router = inject(Router);
   private readonly route = inject(ActivatedRoute);
+  readonly auth = inject(AuthService);
   private copyFlashTimer?: ReturnType<typeof setTimeout>;
   /** Debounced reload for company-config list search (ms). */
   private static readonly companyConfigFilterDebounceMs = 320;
@@ -85,6 +88,9 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
   universalLinkRedirect = '';
   trackingLinkCopyStatus = '';
   linkCopiedFlash = false;
+  readonly websiteEmbedScript = WEBSITE_EMBED_SCRIPT;
+  websiteScriptCopyStatus = '';
+  websiteScriptCopiedFlash = false;
   companyNameFilter = '';
   companyConfigs: CompanyProductConfig[] = [];
   /** Unfiltered list for combobox suggestions (unaffected by table filter). */
@@ -454,6 +460,45 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
       return;
     }
     window.open(url, '_blank', 'noopener,noreferrer');
+  }
+
+  async copyWebsiteEmbedScript(): Promise<void> {
+    this.websiteScriptCopyStatus = '';
+    this.websiteScriptCopiedFlash = false;
+    clearTimeout(this.copyFlashTimer);
+
+    const flashCopied = (): void => {
+      this.websiteScriptCopiedFlash = true;
+      this.copyFlashTimer = setTimeout(() => (this.websiteScriptCopiedFlash = false), 2000);
+    };
+
+    try {
+      await navigator.clipboard.writeText(this.websiteEmbedScript);
+      flashCopied();
+      return;
+    } catch {
+      /* fallback below */
+    }
+
+    const ta = document.getElementById('websiteEmbedScript') as HTMLTextAreaElement | null;
+    if (ta) {
+      ta.focus();
+      ta.select();
+      ta.setSelectionRange(0, ta.value.length);
+      try {
+        const legacyOk = document.execCommand('copy');
+        if (legacyOk) {
+          flashCopied();
+          return;
+        }
+        this.websiteScriptCopyStatus = 'Select the script above and press Ctrl+C.';
+      } catch {
+        this.websiteScriptCopyStatus = 'Select the script above and press Ctrl+C.';
+      }
+      return;
+    }
+
+    this.websiteScriptCopyStatus = 'Could not copy automatically.';
   }
 
   loadDashboard(): void {
@@ -1640,7 +1685,7 @@ interface CompanyProductConfig {
   createdAtUtc: string;
 }
 
-type LeftTab = 'dashboard' | 'leads' | 'company-config' | 'tracking-links' | 'manual-batch';
+type LeftTab = 'dashboard' | 'leads' | 'company-config' | 'tracking-links' | 'website-script' | 'manual-batch';
 type ManualBatchType =
   | 'Day1'
   | 'Day2'

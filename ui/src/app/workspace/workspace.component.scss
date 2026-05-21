@@ -837,6 +837,13 @@
   box-shadow: 0 0 0 3px var(--color-primary-ring);
 }
 
+.website-script-textarea {
+  min-height: 22rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+
 .link-textarea--compact {
   min-height: 3rem;
   max-height: 7.5rem;

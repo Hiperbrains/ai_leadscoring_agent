@@ -17,5 +17,10 @@ export const settingsChildRoutes: Routes = [
     path: 'tracking-links',
     component: WorkspaceComponent,
     data: { workspaceTab: 'tracking-links' as const }
+  },
+  {
+    path: 'website-script',
+    component: WorkspaceComponent,
+    data: { workspaceTab: 'website-script' as const }
   }
 ];
