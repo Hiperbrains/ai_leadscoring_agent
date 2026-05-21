@@ -103,14 +103,12 @@ public class CompanyProductConfigsController(LeadScoringDbContext db, ITenantCon
     public async Task<IActionResult> List([FromQuery] string? companyName = null)
     {
         tenantContext.RequireTenant();
-        var tenantCompany = tenantContext.CompanyName!;
-        var query = db.CompanyProductConfigs.AsNoTracking()
-            .Where(x => x.CompanyName == tenantCompany);
+        var query = db.CompanyProductConfigs.AsNoTracking();
 
         if (!string.IsNullOrWhiteSpace(companyName))
         {
-            var filter = companyName.Trim().ToLower();
-            query = query.Where(x => x.CompanyName.ToLower().Contains(filter));
+            var filter = EscapeILikeLiteral(companyName.Trim());
+            query = query.Where(x => EF.Functions.ILike(x.CompanyName, $"%{filter}%"));
         }
 
         var records = await query
@@ -206,4 +204,9 @@ public class CompanyProductConfigsController(LeadScoringDbContext db, ITenantCon
             .MaxAsync();
         return max + 1;
     }
+
+    private static string EscapeILikeLiteral(string value) =>
+        value.Replace(@"\", @"\\", StringComparison.Ordinal)
+            .Replace("%", @"\%", StringComparison.Ordinal)
+            .Replace("_", @"\_", StringComparison.Ordinal);
 }

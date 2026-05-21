@@ -49,6 +49,10 @@ public class TenantDatabaseProvisioner(IConfiguration configuration, ILogger<Ten
 
     public async Task EnsureReadyAsync(string schemaName, CancellationToken cancellationToken = default)
     {
+        var masterConnection = configuration.GetConnectionString("Hiperbrains")
+            ?? throw new InvalidOperationException("Connection string 'Hiperbrains' is missing.");
+        await MigratePublicCompanyProductConfigsAsync(masterConnection, schemaName, cancellationToken);
+
         if (ReadySchemas.ContainsKey(schemaName))
         {
             return;
@@ -161,6 +165,75 @@ public class TenantDatabaseProvisioner(IConfiguration configuration, ILogger<Ten
         await using (var create = new NpgsqlCommand($"CREATE SCHEMA \"{schemaName}\"", conn))
         {
             await create.ExecuteNonQueryAsync(cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Copies legacy rows from public."CompanyProductConfigs" into the tenant schema when the
+    /// config's company name maps to this schema (pre–multi-tenant data lived in public only).
+    /// </summary>
+    private async Task MigratePublicCompanyProductConfigsAsync(
+        string connectionString,
+        string schemaName,
+        CancellationToken cancellationToken)
+    {
+        await using var conn = new NpgsqlConnection(connectionString);
+        await conn.OpenAsync(cancellationToken);
+
+        await using var existsCmd = new NpgsqlCommand(
+            """
+            SELECT EXISTS (
+              SELECT 1 FROM pg_tables
+              WHERE schemaname = 'public' AND tablename = 'CompanyProductConfigs'
+            )
+            """,
+            conn);
+        var publicTableExists = Convert.ToBoolean(
+            await existsCmd.ExecuteScalarAsync(cancellationToken),
+            System.Globalization.CultureInfo.InvariantCulture);
+        if (!publicTableExists)
+        {
+            return;
+        }
+
+        var escapedSchema = schemaName.Replace("\"", "\"\"", StringComparison.Ordinal);
+        await using var migrateCmd = new NpgsqlCommand(
+            $"""
+            INSERT INTO "{escapedSchema}"."CompanyProductConfigs"
+                ("Id", "CompanyName", "ProductName", "ProductId", "ProductEventConfigJson", "CreatedAtUtc")
+            SELECT
+                p."Id",
+                p."CompanyName",
+                p."ProductName",
+                p."ProductId",
+                p."ProductEventConfigJson",
+                COALESCE(p."CreatedAtUtc", NOW() AT TIME ZONE 'utc')
+            FROM public."CompanyProductConfigs" p
+            WHERE 'tenant_' || LEFT(REGEXP_REPLACE(LOWER(TRIM(p."CompanyName")), '[^a-z0-9]+', '', 'g'), 40) = @schema
+              AND NOT EXISTS (
+                SELECT 1 FROM "{escapedSchema}"."CompanyProductConfigs" t
+                WHERE t."CompanyName" = p."CompanyName"
+                  AND t."ProductName" = p."ProductName"
+                  AND t."ProductId" = p."ProductId"
+              )
+            """,
+            conn);
+        migrateCmd.Parameters.AddWithValue("schema", schemaName);
+
+        try
+        {
+            var inserted = await migrateCmd.ExecuteNonQueryAsync(cancellationToken);
+            if (inserted > 0)
+            {
+                logger.LogInformation(
+                    "Migrated {Count} company product config(s) from public into schema {SchemaName}.",
+                    inserted,
+                    schemaName);
+            }
+        }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedTable)
+        {
+            logger.LogDebug(ex, "Skipping public config migration for {SchemaName}; tenant table not ready.", schemaName);
         }
     }
 
