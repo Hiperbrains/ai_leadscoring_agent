@@ -410,18 +410,22 @@
       <div class="info-banner__text">
         <p class="info-banner__title">How to add a company product config</p>
         <p class="info-banner__body">
-          Enter or pick a <strong>company</strong> and <strong>product</strong> (saved names appear as suggestions). Map
-          each funnel event to a score (0 or higher). Set minimum <strong>cumulative</strong> scores for
-          Cold → Warm → MQL → Hot (defaults match the legacy cut-offs). Submit to save; configs appear below where you can
-          filter or edit.
+          Enter or pick a <strong>company</strong> and <strong>product</strong> (saved names appear as suggestions). When
+          the pair matches a saved config below, events and Warm/MQL/Hot thresholds load automatically for editing.
+          Map each funnel event to a score (0 or greater). Submit to create a new mapping or save changes to an existing
+          one (same pair). Saved rows also appear below for filter or edit in the modal.
         </p>
       </div>
     </div>
     <div class="config-form-grid">
       <app-combobox label="Company Name" [required]="true" name="ccfCompany" placeholder="Type or choose company"
-        [(ngModel)]="companyProductForm.companyName" [options]="distinctCompanyNames" [allowCustomValue]="true" />
+        [(ngModel)]="companyProductForm.companyName"
+        (ngModelChange)="scheduleMainCompanyProductHydrate()"
+        [options]="distinctCompanyNames" [allowCustomValue]="true" />
       <app-combobox label="Product Name" [required]="true" name="ccfProduct" placeholder="Type or choose product"
-        [(ngModel)]="companyProductForm.productName" [options]="productsForSelectedCompany" [allowCustomValue]="true" />
+        [(ngModel)]="companyProductForm.productName"
+        (ngModelChange)="scheduleMainCompanyProductHydrate()"
+        [options]="productsForSelectedCompany" [allowCustomValue]="true" />
     </div>
     <div class="event-config-section">
       <h3 class="subsection-title">Product Event Config (Event → Score)</h3>

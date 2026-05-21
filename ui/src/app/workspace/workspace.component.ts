@@ -50,6 +50,8 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
   private copyFlashTimer?: ReturnType<typeof setTimeout>;
   /** Debounced reload for company-config list search (ms). */
   private static readonly companyConfigFilterDebounceMs = 320;
+  /** Debounced autofill after company/product typing so we sync only when typing pauses (combobox emits every keystroke). */
+  private static readonly mainCompanyProductHydrateDebounceMs = 350;
   /** Default Warm/MQL/Hot minimum-score boundaries (aligned with backend legacy buckets). */
   private static readonly defaultStageFormValues = {
     warmMinScore: '51',
@@ -101,6 +103,8 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
   companyConfigs: CompanyProductConfig[] = [];
   /** Unfiltered list for combobox suggestions (unaffected by table filter). */
   companyProductAll: CompanyProductConfig[] = [];
+  /** Debounced autofill timer for Product Event rows + thresholds when picking an existing company/product pair. */
+  private mainFormHydrateTimer?: ReturnType<typeof setTimeout>;
   configLoading = false;
   configError = '';
   configSuccess = '';
@@ -282,6 +286,71 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }
 
+  /** Combobox emits on every keystroke; debounce so we only hydrate after the user settles on names. */
+  scheduleMainCompanyProductHydrate(): void {
+    if (this.mainFormHydrateTimer !== undefined) {
+      clearTimeout(this.mainFormHydrateTimer);
+    }
+    this.mainFormHydrateTimer = setTimeout(() => {
+      this.mainFormHydrateTimer = undefined;
+      this.hydrateMainCompanyProductFormFromSavedConfigs();
+    }, WorkspaceComponent.mainCompanyProductHydrateDebounceMs);
+  }
+
+  private clearMainFormHydrateTimer(): void {
+    if (this.mainFormHydrateTimer !== undefined) {
+      clearTimeout(this.mainFormHydrateTimer);
+      this.mainFormHydrateTimer = undefined;
+    }
+  }
+
+  private hydrateMainCompanyProductFormFromSavedConfigs(): void {
+    const cn = this.companyProductForm.companyName.trim();
+    const pn = this.companyProductForm.productName.trim();
+    if (!cn || !pn) {
+      return;
+    }
+
+    const match = this.findSavedCompanyProductPair(cn, pn);
+    if (!match) {
+      return;
+    }
+
+    this.companyProductForm = this.companyProductFormSnapshotFromSaved(
+      match,
+      this.companyProductForm.companyName,
+      this.companyProductForm.productName
+    );
+  }
+
+  private findSavedCompanyProductPair(cnTrimmed: string, pnTrimmed: string): CompanyProductConfig | undefined {
+    return this.companyProductAll.find(
+      (c) =>
+        c.companyName.trim().toLowerCase() === cnTrimmed.toLowerCase() &&
+        c.productName.trim().toLowerCase() === pnTrimmed.toLowerCase()
+    );
+  }
+
+  private companyProductFormSnapshotFromSaved(
+    config: CompanyProductConfig,
+    companyNamePreserve: string,
+    productNamePreserve: string
+  ): CompanyProductForm {
+    const mapped = this.eventConfigEntries(config.productEventConfig).map((x) => ({
+      eventName: x.key,
+      score: x.value
+    }));
+    const st = config.stageThresholds;
+    return {
+      companyName: companyNamePreserve,
+      productName: productNamePreserve,
+      items: mapped.length > 0 ? mapped : [{ eventName: '', score: '' }],
+      warmMinScore: String(st?.warmMin ?? WorkspaceComponent.defaultStageFormValues.warmMinScore),
+      mqlMinScore: String(st?.mqlMin ?? WorkspaceComponent.defaultStageFormValues.mqlMinScore),
+      hotMinScore: String(st?.hotMin ?? WorkspaceComponent.defaultStageFormValues.hotMinScore)
+    };
+  }
+
   ngOnInit(): void {
     this.syncTabFromRoute();
     this.router.events.pipe(filter((e): e is NavigationEnd => e instanceof NavigationEnd)).subscribe(() => this.syncTabFromRoute());
@@ -355,6 +424,7 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
     if (this.activeTab === 'company-config' && tab !== 'company-config') {
       this.companyConfigDeleteTarget = null;
       this.closeCompanyConfigEditModal();
+      this.clearMainFormHydrateTimer();
     }
     this.activeTab = tab;
     if (tab === 'dashboard' && !this.dashboardSummary && !this.loadingSummary) {
@@ -374,6 +444,7 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.stopManualRunPolling();
+    this.clearMainFormHydrateTimer();
     if (this.companyConfigFilterSearchTimer !== undefined) {
       clearTimeout(this.companyConfigFilterSearchTimer);
       this.companyConfigFilterSearchTimer = undefined;
@@ -1147,12 +1218,29 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
       stageThresholds: stageParse.stageThresholds
     };
 
+    const existing = this.findSavedCompanyProductPair(companyName, productName);
+    const updatingId = existing?.id ?? null;
+
     this.savingConfig = true;
-    this.http.post<CompanyProductConfig>(`${this.apiBase}/api/company-product-configs`, payload).subscribe({
+
+    const request$ =
+      updatingId !== null && updatingId.trim() !== ''
+        ? this.http.put<CompanyProductConfig>(
+            `${this.apiBase}/api/company-product-configs/${encodeURIComponent(updatingId)}`,
+            payload
+          )
+        : this.http.post<CompanyProductConfig>(`${this.apiBase}/api/company-product-configs`, payload);
+
+    request$.subscribe({
       next: () => {
         this.savingConfig = false;
-        this.configSuccess = 'Company product config saved.';
-        this.resetCompanyConfigForm(companyName);
+        const wasUpdating = updatingId !== null && updatingId.trim() !== '';
+        this.configSuccess = wasUpdating
+          ? 'Company product config updated.'
+          : 'Company product config saved.';
+        if (!wasUpdating) {
+          this.resetCompanyConfigForm(companyName);
+        }
         this.reloadCompanyProductViews();
       },
       error: () => {
@@ -1236,19 +1324,11 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
 
   openCompanyConfigEditModal(config: CompanyProductConfig): void {
     this.companyConfigEditModalId = config.id;
-    const mapped = this.eventConfigEntries(config.productEventConfig).map((x) => ({
-      eventName: x.key,
-      score: x.value
-    }));
-    const st = config.stageThresholds;
-    this.companyProductEditForm = {
-      companyName: config.companyName,
-      productName: config.productName,
-      items: mapped.length > 0 ? mapped : [{ eventName: '', score: '' }],
-      warmMinScore: String(st?.warmMin ?? 51),
-      mqlMinScore: String(st?.mqlMin ?? 101),
-      hotMinScore: String(st?.hotMin ?? 151)
-    };
+    this.companyProductEditForm = this.companyProductFormSnapshotFromSaved(
+      config,
+      config.companyName,
+      config.productName
+    );
     this.configEditModalError = '';
   }
 
@@ -1333,6 +1413,7 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
         if (!filter) {
           this.companyProductAll = records;
         }
+        this.scheduleMainCompanyProductHydrate();
       },
       error: () => {
         this.configLoading = false;
@@ -1369,6 +1450,7 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
     this.http.get<CompanyProductConfig[]>(`${this.apiBase}/api/company-product-configs`).subscribe({
       next: (rows) => {
         this.companyProductAll = rows;
+        this.scheduleMainCompanyProductHydrate();
       },
       error: () => {
         /* keep previous suggestions on failure */
