@@ -204,7 +204,7 @@ public class TenantDatabaseProvisioner(IConfiguration configuration, ILogger<Ten
         await using var migrateCmd = new NpgsqlCommand(
             $"""
             INSERT INTO "{escapedSchema}"."CompanyProductConfigs"
-                ("Id", "CompanyName", "ProductName", "ProductId", "ProductEventConfigJson", "StageThresholdsJson", "CreatedAtUtc")
+                ("Id", "CompanyName", "ProductName", "ProductId", "ProductEventConfigJson", "StageThresholdsJson", "CreatedAtUtc", "ProductUrl")
             SELECT
                 p."Id",
                 p."CompanyName",
@@ -212,7 +212,8 @@ public class TenantDatabaseProvisioner(IConfiguration configuration, ILogger<Ten
                 p."ProductId",
                 p."ProductEventConfigJson",
                 NULL::text AS "StageThresholdsJson",
-                COALESCE(p."CreatedAtUtc", NOW() AT TIME ZONE 'utc')
+                COALESCE(p."CreatedAtUtc", NOW() AT TIME ZONE 'utc'),
+                NULL::text AS "ProductUrl"
             FROM public."CompanyProductConfigs" p
             WHERE 'tenant_' || LEFT(REGEXP_REPLACE(LOWER(TRIM(p."CompanyName")), '[^a-z0-9]+', '', 'g'), 40) = @schema
               AND NOT EXISTS (

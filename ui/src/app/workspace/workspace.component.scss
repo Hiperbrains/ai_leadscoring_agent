@@ -683,6 +683,41 @@
 .stage-threshold-grid{grid-template-columns:repeat(auto-fit,minmax(10rem,1fr))}
 .config-list-stage-line{margin-top:var(--space-2)}
 
+.event-score-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.event-score-config-table {
+  width: 100%;
+  min-width: min(520px, 100%);
+}
+
+.event-score-config-table th:last-child,
+.event-score-config-table td:last-child {
+  white-space: nowrap;
+}
+
+.company-config-list-td-url {
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.company-config-list-url-link {
+  color: var(--color-primary);
+  text-decoration: none;
+}
+
+.company-config-list-url-link:hover {
+  text-decoration: underline;
+}
+
+.word-break-anywhere {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 /* Toolbar inside app-table-shell: list action (Add Item) grouped with rows */
 .event-score-table-toolbar {
   display: flex;
@@ -700,17 +735,6 @@
   align-items: center;
   gap: var(--space-2);
   margin-top: var(--space-4);
-}
-
-.company-config-list-filter {
-  margin-bottom: var(--space-3);
-  padding-bottom: var(--space-3);
-  border-bottom: 1px solid var(--color-border);
-
-  app-input {
-    display: block;
-    max-width: min(26rem, 100%);
-  }
 }
 
 .empty-state {
@@ -1228,12 +1252,12 @@
     table-layout: fixed;
   }
 
-  col.ccl-col-company {
-    width: 15%;
+  col.ccl-col-product-name {
+    width: 18%;
   }
 
-  col.ccl-col-product {
-    width: 15%;
+  col.ccl-col-product-url {
+    width: 22%;
   }
 
   col.ccl-col-created {
@@ -1263,9 +1287,10 @@
   }
 
   .config-list-badges {
-    max-height: 10rem;
-    overflow-y: auto;
-    overscroll-behavior: contain;
+    display: flex;
+    flex-wrap: wrap;
+    max-height: none;
+    overflow: visible;
     padding: var(--space-2);
     border-radius: var(--radius-md);
     border: 1px solid var(--color-border-light);

@@ -1,7 +1,72 @@
+using System.Collections.Generic;
 using System.Text.Json;
 
 namespace LeadScoring.Api.Contracts;
 
+/// <summary>Canonical HTTP(S) URLs for product links.</summary>
+public static class ProductUrlNormalizer
+{
+    private const int MaxLength = 2048;
+
+    public static bool TryNormalize(string? raw, out string canonical, out string errorMessage)
+    {
+        canonical = string.Empty;
+        errorMessage = string.Empty;
+
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            errorMessage = "Product URL is required.";
+            return false;
+        }
+
+        var trimmed = raw.Trim();
+        if (trimmed.Length > MaxLength)
+        {
+            errorMessage = "Product URL is too long.";
+            return false;
+        }
+
+        var uri = ResolveHttpUri(trimmed);
+        if (uri is null)
+        {
+            errorMessage = "Enter a valid product URL (http or https).";
+            return false;
+        }
+
+        canonical = uri.ToString();
+        return true;
+    }
+
+    private static Uri? ResolveHttpUri(string trimmed)
+    {
+        foreach (var candidate in HttpUriCandidates(trimmed))
+        {
+            if (!Uri.TryCreate(candidate, UriKind.Absolute, out var u))
+            {
+                continue;
+            }
+
+            var http = string.Equals(u.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase);
+            var https = string.Equals(u.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase);
+            if ((http || https) && !string.IsNullOrWhiteSpace(u.Host))
+            {
+                return u;
+            }
+        }
+
+        return null;
+    }
+
+    private static IEnumerable<string> HttpUriCandidates(string input)
+    {
+        var trimmed = input.Trim();
+        yield return trimmed;
+        if (!trimmed.Contains("://", StringComparison.Ordinal))
+        {
+            yield return $"https://{trimmed}";
+        }
+    }
+}
 /// <summary>Minimum total score for each stage boundary: Cold &lt; WarmMin ≤ scores &lt; MqlMin are Warm; MQL &lt; HotMin.</summary>
 public sealed class StageScoreThresholdsDto
 {
@@ -110,6 +175,7 @@ public sealed class UpsertCompanyProductConfigRequest
 {
     public string CompanyName { get; set; } = string.Empty;
     public string ProductName { get; set; } = string.Empty;
+    public string ProductUrl { get; set; } = string.Empty;
     /// <summary>Optional; ignored. ProductId is assigned by the server on create and preserved on update.</summary>
     public int ProductId { get; set; }
     public Dictionary<string, int> ProductEventConfig { get; set; } = new(StringComparer.OrdinalIgnoreCase);
@@ -123,6 +189,7 @@ public sealed class CompanyProductConfigDto
     public Guid Id { get; set; }
     public string CompanyName { get; set; } = string.Empty;
     public string ProductName { get; set; } = string.Empty;
+    public string? ProductUrl { get; set; }
     public int ProductId { get; set; }
     public Dictionary<string, int> ProductEventConfig { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public StageScoreThresholdsDto StageThresholds { get; set; } = new();
@@ -135,6 +202,7 @@ public static class CompanyProductConfigMapper
         Guid id,
         string companyName,
         string productName,
+        string? productUrl,
         int productId,
         string productEventConfigJson,
         string? stageThresholdsJson,
@@ -157,6 +225,7 @@ public static class CompanyProductConfigMapper
             Id = id,
             CompanyName = companyName,
             ProductName = productName,
+            ProductUrl = string.IsNullOrWhiteSpace(productUrl) ? null : productUrl,
             ProductId = productId,
             ProductEventConfig = parsed ?? new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase),
             StageThresholds = stages,

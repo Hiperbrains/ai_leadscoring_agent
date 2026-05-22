@@ -398,7 +398,8 @@
 </div>
 
 <div *ngIf="activeTab === 'company-config'">
-  <app-workspace-top-bar title="Company Config" subtitle="Map funnel events and lead stage score thresholds per company product." />
+  <app-workspace-top-bar title="Company Config"
+    subtitle="Map funnel events and lead stage thresholds for each product on your website. Your workspace company is applied automatically." />
 
   <app-card heading="Company Product Config">
     <div class="info-banner">
@@ -410,30 +411,27 @@
       <div class="info-banner__text">
         <p class="info-banner__title">How to add a company product config</p>
         <p class="info-banner__body">
-          Enter or pick a <strong>company</strong> and <strong>product</strong> (saved names appear as suggestions). When
-          the pair matches a saved config below, events and Warm/MQL/Hot thresholds load automatically for editing.
-          Map each funnel event to a score (0 or greater). Submit to create a new mapping or save changes to an existing
-          one (same pair). Saved rows also appear below for filter or edit in the modal.
+          Enter a <strong>product name</strong> and <strong>product URL</strong> (http or https). When the pair matches a
+          saved row below, events and Warm/MQL/Hot thresholds load automatically for editing. Map each funnel event to a
+          score (0 or greater). Submit to create a new config or update an existing one with the same pair. Use the list
+          below to edit or delete in the modal.
         </p>
       </div>
     </div>
     <div class="config-form-grid">
-      <app-combobox label="Company Name" [required]="true" name="ccfCompany" placeholder="Type or choose company"
-        [(ngModel)]="companyProductForm.companyName"
-        (ngModelChange)="scheduleMainCompanyProductHydrate()"
-        [options]="distinctCompanyNames" [allowCustomValue]="true" />
-      <app-combobox label="Product Name" [required]="true" name="ccfProduct" placeholder="Type or choose product"
-        [(ngModel)]="companyProductForm.productName"
-        (ngModelChange)="scheduleMainCompanyProductHydrate()"
-        [options]="productsForSelectedCompany" [allowCustomValue]="true" />
+      <app-input label="Product Name" [required]="true" name="ccfProductName" placeholder="Enter product name"
+        [(ngModel)]="companyProductForm.productName" (ngModelChange)="scheduleMainCompanyProductHydrate()" />
+      <app-input label="Product URL" [required]="true" name="ccfProductUrl" placeholder="https://example.com or example.com"
+        [(ngModel)]="companyProductForm.productUrl" (ngModelChange)="scheduleMainCompanyProductHydrate()" />
     </div>
-    <div class="event-config-section">
+    <div class="event-config-section event-config-section--form">
       <h3 class="subsection-title">Product Event Config (Event → Score)</h3>
       <p class="event-config-hint caption-muted">
         Add events and a score each (0 or greater). Every row with an event name must have a score before you submit.
       </p>
-      <app-table>
-        <table>
+      <div class="event-score-table-scroll">
+        <app-table>
+          <table class="event-score-config-table">
           <thead>
             <tr>
               <th>Event name</th>
@@ -464,6 +462,7 @@
           <app-button variant="secondary" type="button" (click)="addEventItem()">+ Add Item</app-button>
         </div>
       </app-table>
+      </div>
     </div>
     <div class="event-config-section">
       <h3 class="subsection-title">Lead stage thresholds (minimum total score)</h3>
@@ -491,25 +490,21 @@
   </app-card>
 
   <app-card heading="Company Product Config List">
-    <div class="company-config-list-filter" role="search" aria-label="Filter list by company">
-      <app-input label="Company" placeholder="Search…" [fullWidth]="true" [(ngModel)]="companyNameFilter"
-        (ngModelChange)="onCompanyConfigFilterInput()" name="compFilterInp" />
-    </div>
     <p class="caption-muted" *ngIf="configLoading">Loading configurations…</p>
     <div class="company-config-list-wrap" *ngIf="!configLoading && companyConfigs.length > 0">
       <app-table>
         <table class="company-config-list-table">
           <colgroup>
-            <col class="ccl-col-company" />
-            <col class="ccl-col-product" />
+            <col class="ccl-col-product-name" />
+            <col class="ccl-col-product-url" />
             <col class="ccl-col-events" />
             <col class="ccl-col-created" />
             <col class="ccl-col-actions" />
           </colgroup>
           <thead>
             <tr>
-              <th scope="col">Company</th>
-              <th scope="col">Product</th>
+              <th scope="col">Product name</th>
+              <th scope="col">Product URL</th>
               <th scope="col">Event config</th>
               <th scope="col">Created</th>
               <th scope="col">Action</th>
@@ -517,10 +512,13 @@
           </thead>
           <tbody>
             <tr *ngFor="let config of companyConfigs">
-              <td class="cell-body-sm company-config-list-td-clip" [attr.title]="config.companyName">{{
-                config.companyName }}</td>
               <td class="cell-body-sm company-config-list-td-clip" [attr.title]="config.productName">{{
                 config.productName }}</td>
+              <td class="cell-body-sm company-config-list-td-url">
+                <a *ngIf="config.productUrl?.trim(); else noUrl" class="company-config-list-url-link" [href]="config.productUrl!"
+                  target="_blank" rel="noopener noreferrer">{{ config.productUrl }}</a>
+                <ng-template #noUrl><span class="cell-muted">—</span></ng-template>
+              </td>
               <td class="company-config-list-td-events">
                 @let evs = eventConfigEntries(config.productEventConfig);
                 @if (evs.length > 0) {
@@ -574,22 +572,24 @@
     <div class="company-config-edit-modal__panel" role="dialog" aria-modal="true"
       aria-labelledby="company-config-edit-title">
       <h2 id="company-config-edit-title" class="company-config-edit-modal__title">Edit company product config</h2>
-      <p class="company-config-edit-modal__subtitle caption-muted">Update company, product, event scores, and stage
-        thresholds. Changes apply when you save.</p>
+      <p class="company-config-edit-modal__subtitle caption-muted">
+        Update product name, URL, event scores, and stage thresholds for this row. Saved changes replace the mapping for
+        the same workspace company.
+      </p>
 
       <div class="config-form-grid">
-        <app-combobox label="Company Name" [required]="true" name="ccfCompanyEdit" placeholder="Type or choose company"
-          [(ngModel)]="companyProductEditForm.companyName" [options]="distinctCompanyNames" [allowCustomValue]="true" />
-        <app-combobox label="Product Name" [required]="true" name="ccfProductEdit" placeholder="Type or choose product"
-          [(ngModel)]="companyProductEditForm.productName" [options]="productsForEditModalCompany"
-          [allowCustomValue]="true" />
+        <app-input label="Product Name" [required]="true" name="ccfProductEdit" placeholder="Enter product name"
+          [(ngModel)]="companyProductEditForm.productName" />
+        <app-input label="Product URL" [required]="true" name="ccfProductUrlEdit"
+          placeholder="https://example.com or example.com" [(ngModel)]="companyProductEditForm.productUrl" />
       </div>
 
-      <div class="event-config-section company-config-edit-modal__event-section">
+      <div class="event-config-section company-config-edit-modal__event-section event-config-section--modal">
         <h3 class="subsection-title">Product Event Config (Event → Score)</h3>
         <p class="event-config-hint caption-muted">Add events and a score each (0 or greater).</p>
-        <app-table>
-          <table>
+        <div class="event-score-table-scroll">
+          <app-table>
+            <table class="event-score-config-table">
             <thead>
               <tr>
                 <th>Event name</th>
@@ -620,6 +620,7 @@
             <app-button variant="secondary" type="button" (click)="addEditEventItem()">+ Add Item</app-button>
           </div>
         </app-table>
+        </div>
       </div>
 
       <div class="event-config-section company-config-edit-modal__event-section">
@@ -659,7 +660,8 @@
       aria-labelledby="company-config-delete-title">
       <h2 id="company-config-delete-title" class="company-config-delete-modal__title">Delete this configuration?</h2>
       <p class="company-config-delete-modal__body">
-        This removes the mapping for <strong>{{ del.companyName }}</strong> / <strong>{{ del.productName }}</strong>.
+        This removes the product config for <strong>{{ del.productName }}</strong><ng-container
+          *ngIf="del.productUrl?.trim()"> (<span class="word-break-anywhere">{{ del.productUrl }}</span>)</ng-container>.
         This cannot be undone.
       </p>
       <div class="company-config-delete-modal__actions">

@@ -48,9 +48,6 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
   private readonly route = inject(ActivatedRoute);
   readonly auth = inject(AuthService);
   private copyFlashTimer?: ReturnType<typeof setTimeout>;
-  /** Debounced reload for company-config list search (ms). */
-  private static readonly companyConfigFilterDebounceMs = 320;
-  /** Debounced autofill after company/product typing so we sync only when typing pauses (combobox emits every keystroke). */
   private static readonly mainCompanyProductHydrateDebounceMs = 350;
   /** Default Warm/MQL/Hot minimum-score boundaries (aligned with backend legacy buckets). */
   private static readonly defaultStageFormValues = {
@@ -58,8 +55,6 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
     mqlMinScore: '101',
     hotMinScore: '151'
   } as const;
-  private companyConfigFilterSearchTimer?: ReturnType<typeof setTimeout>;
-  /** Set after the first `syncTabFromRoute` applies so identical tab route events can be skipped. */
   private workspaceRouteSynced = false;
   apiBase = this.resolveApiBase();
   error = '';
@@ -99,11 +94,10 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
   readonly websiteEmbedScript = WEBSITE_EMBED_SCRIPT;
   websiteScriptCopyStatus = '';
   websiteScriptCopiedFlash = false;
-  companyNameFilter = '';
   companyConfigs: CompanyProductConfig[] = [];
-  /** Unfiltered list for combobox suggestions (unaffected by table filter). */
+  /** All configs for the signed-in tenant (used for hydrate + POST vs PUT). */
   companyProductAll: CompanyProductConfig[] = [];
-  /** Debounced autofill timer for Product Event rows + thresholds when picking an existing company/product pair. */
+  /** Debounced autofill after product typing so we sync when typing pauses. */
   private mainFormHydrateTimer?: ReturnType<typeof setTimeout>;
   configLoading = false;
   configError = '';
@@ -115,8 +109,8 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
   /** When set, the edit-company-config modal is open (matches row id). */
   companyConfigEditModalId: string | null = null;
   companyProductEditForm: CompanyProductForm = {
-    companyName: '',
     productName: '',
+    productUrl: '',
     items: [{ eventName: '', score: '' }],
     warmMinScore: WorkspaceComponent.defaultStageFormValues.warmMinScore,
     mqlMinScore: WorkspaceComponent.defaultStageFormValues.mqlMinScore,
@@ -125,8 +119,8 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
   configEditModalError = '';
   savingEditModal = false;
   companyProductForm: CompanyProductForm = {
-    companyName: '',
     productName: '',
+    productUrl: '',
     items: [{ eventName: '', score: '' }],
     warmMinScore: WorkspaceComponent.defaultStageFormValues.warmMinScore,
     mqlMinScore: WorkspaceComponent.defaultStageFormValues.mqlMinScore,
@@ -247,46 +241,7 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
     );
   }
 
-  /** Unique company names from saved configs (datalist suggestions). */
-  get distinctCompanyNames(): string[] {
-    const set = new Set<string>();
-    for (const c of this.companyProductAll) {
-      const n = c.companyName?.trim();
-      if (n) {
-        set.add(n);
-      }
-    }
-    return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }
-
-  /** Product names for the typed/selected company (trimmed names, case-insensitive). */
-  get productsForSelectedCompany(): string[] {
-    return this.productNamesForCompany(this.companyProductForm.companyName);
-  }
-
-  /** Product suggestions for the edit modal combobox. */
-  get productsForEditModalCompany(): string[] {
-    return this.productNamesForCompany(this.companyProductEditForm.companyName);
-  }
-
-  private productNamesForCompany(companyNameRaw: string): string[] {
-    const target = companyNameRaw.trim().toLowerCase();
-    if (!target) {
-      return [];
-    }
-    const set = new Set<string>();
-    for (const c of this.companyProductAll) {
-      if (c.companyName.trim().toLowerCase() === target) {
-        const p = c.productName?.trim();
-        if (p) {
-          set.add(p);
-        }
-      }
-    }
-    return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }
-
-  /** Combobox emits on every keystroke; debounce so we only hydrate after the user settles on names. */
+  /** Debounced autofill after product name/URL typing. */
   scheduleMainCompanyProductHydrate(): void {
     if (this.mainFormHydrateTimer !== undefined) {
       clearTimeout(this.mainFormHydrateTimer);
@@ -305,36 +260,70 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
   }
 
   private hydrateMainCompanyProductFormFromSavedConfigs(): void {
-    const cn = this.companyProductForm.companyName.trim();
     const pn = this.companyProductForm.productName.trim();
-    if (!cn || !pn) {
+    if (!pn) {
       return;
     }
 
-    const match = this.findSavedCompanyProductPair(cn, pn);
+    const match = this.findSavedMatchingConfig(pn, this.companyProductForm.productUrl);
     if (!match) {
       return;
     }
 
-    this.companyProductForm = this.companyProductFormSnapshotFromSaved(
-      match,
-      this.companyProductForm.companyName,
-      this.companyProductForm.productName
-    );
+    this.companyProductForm = this.companyProductFormSnapshotFromSaved(match, pn, this.companyProductForm.productUrl);
   }
 
-  private findSavedCompanyProductPair(cnTrimmed: string, pnTrimmed: string): CompanyProductConfig | undefined {
-    return this.companyProductAll.find(
-      (c) =>
-        c.companyName.trim().toLowerCase() === cnTrimmed.toLowerCase() &&
-        c.productName.trim().toLowerCase() === pnTrimmed.toLowerCase()
-    );
+  /** Canonical-ish URL compare (aligned loosely with backend). */
+  private normalizeProductUrlForMatch(raw: string): string {
+    const t = raw.trim();
+    if (!t) {
+      return '';
+    }
+    try {
+      const candidate = /^https?:\/\//i.test(t) ? t : `https://${t}`;
+      const u = new URL(candidate);
+      return u.href;
+    } catch {
+      return t.trim().toLowerCase();
+    }
+  }
+
+  private findSavedMatchingConfig(productNameTrimmed: string, productUrlRaw: string): CompanyProductConfig | undefined {
+    const pn = productNameTrimmed.trim().toLowerCase();
+    const formNorm = this.normalizeProductUrlForMatch(productUrlRaw);
+    const named = this.companyProductAll.filter((c) => c.productName.trim().toLowerCase() === pn);
+    if (named.length === 0) {
+      return undefined;
+    }
+
+    const byStoredUrl = named.filter((c) => this.normalizeProductUrlForMatch(c.productUrl ?? '') === formNorm);
+    if (byStoredUrl.length === 1) {
+      return byStoredUrl[0];
+    }
+
+    // Multiple rows sharing the same canonical URL (unlikely): newest wins if exact URL match ambiguity.
+    if (byStoredUrl.length > 1) {
+      return [...byStoredUrl].sort((a, b) => Date.parse(b.createdAtUtc) - Date.parse(a.createdAtUtc))[0];
+    }
+
+    if (formNorm === '') {
+      const legacyAbsentUrl = named.filter((c) => !c.productUrl?.trim());
+      if (named.length === 1) {
+        return named[0];
+      }
+      if (legacyAbsentUrl.length === 1) {
+        return legacyAbsentUrl[0];
+      }
+      return undefined;
+    }
+
+    return undefined;
   }
 
   private companyProductFormSnapshotFromSaved(
     config: CompanyProductConfig,
-    companyNamePreserve: string,
-    productNamePreserve: string
+    productNamePreserve?: string,
+    productUrlPreserve?: string
   ): CompanyProductForm {
     const mapped = this.eventConfigEntries(config.productEventConfig).map((x) => ({
       eventName: x.key,
@@ -342,15 +331,17 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
     }));
     const st = config.stageThresholds;
     return {
-      companyName: companyNamePreserve,
-      productName: productNamePreserve,
+      productName: (productNamePreserve ?? config.productName).trim(),
+      productUrl:
+        productUrlPreserve !== undefined
+          ? productUrlPreserve.trim()
+          : config.productUrl?.trim() ?? '',
       items: mapped.length > 0 ? mapped : [{ eventName: '', score: '' }],
       warmMinScore: String(st?.warmMin ?? WorkspaceComponent.defaultStageFormValues.warmMinScore),
       mqlMinScore: String(st?.mqlMin ?? WorkspaceComponent.defaultStageFormValues.mqlMinScore),
       hotMinScore: String(st?.hotMin ?? WorkspaceComponent.defaultStageFormValues.hotMinScore)
     };
   }
-
   ngOnInit(): void {
     this.syncTabFromRoute();
     this.router.events.pipe(filter((e): e is NavigationEnd => e instanceof NavigationEnd)).subscribe(() => this.syncTabFromRoute());
@@ -445,10 +436,6 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
   ngOnDestroy(): void {
     this.stopManualRunPolling();
     this.clearMainFormHydrateTimer();
-    if (this.companyConfigFilterSearchTimer !== undefined) {
-      clearTimeout(this.companyConfigFilterSearchTimer);
-      this.companyConfigFilterSearchTimer = undefined;
-    }
     if (this.copyFlashTimer !== undefined) {
       clearTimeout(this.copyFlashTimer);
     }
@@ -1170,10 +1157,19 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
     this.configError = '';
     this.configSuccess = '';
 
-    const companyName = this.companyProductForm.companyName.trim();
+    const companyName = this.auth.user()?.companyName?.trim() ?? '';
     const productName = this.companyProductForm.productName.trim();
-    if (!companyName || !productName) {
-      this.configError = 'Company name and product name are required.';
+    const productUrl = this.companyProductForm.productUrl.trim();
+    if (!companyName) {
+      this.configError = 'Your session does not include a company. Please sign in again.';
+      return;
+    }
+    if (!productName) {
+      this.configError = 'Product name is required.';
+      return;
+    }
+    if (!productUrl) {
+      this.configError = 'Product URL is required.';
       return;
     }
 
@@ -1214,11 +1210,12 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
     const payload: UpsertCompanyProductConfigRequest = {
       companyName,
       productName,
+      productUrl,
       productEventConfig,
       stageThresholds: stageParse.stageThresholds
     };
 
-    const existing = this.findSavedCompanyProductPair(companyName, productName);
+    const existing = this.findSavedMatchingConfig(productName, productUrl);
     const updatingId = existing?.id ?? null;
 
     this.savingConfig = true;
@@ -1239,13 +1236,13 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
           ? 'Company product config updated.'
           : 'Company product config saved.';
         if (!wasUpdating) {
-          this.resetCompanyConfigForm(companyName);
+          this.resetCompanyConfigForm();
         }
         this.reloadCompanyProductViews();
       },
-      error: () => {
+      error: (err: unknown) => {
         this.savingConfig = false;
-        this.configError = 'Failed to save config. Check API and values.';
+        this.configError = this.formatApiError(err, 'Failed to save config.');
       }
     });
   }
@@ -1258,10 +1255,19 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
 
     this.configEditModalError = '';
 
-    const companyName = this.companyProductEditForm.companyName.trim();
+    const companyName = this.auth.user()?.companyName?.trim() ?? '';
     const productName = this.companyProductEditForm.productName.trim();
-    if (!companyName || !productName) {
-      this.configEditModalError = 'Company name and product name are required.';
+    const productUrl = this.companyProductEditForm.productUrl.trim();
+    if (!companyName) {
+      this.configEditModalError = 'Your session does not include a company. Please sign in again.';
+      return;
+    }
+    if (!productName) {
+      this.configEditModalError = 'Product name is required.';
+      return;
+    }
+    if (!productUrl) {
+      this.configEditModalError = 'Product URL is required.';
       return;
     }
 
@@ -1302,6 +1308,7 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
     const payload: UpsertCompanyProductConfigRequest = {
       companyName,
       productName,
+      productUrl,
       productEventConfig,
       stageThresholds: stageParse.stageThresholds
     };
@@ -1315,28 +1322,24 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
         this.closeCompanyConfigEditModal();
         this.reloadCompanyProductViews();
       },
-      error: () => {
+      error: (err: unknown) => {
         this.savingEditModal = false;
-        this.configEditModalError = 'Failed to update config. Check API and values.';
+        this.configEditModalError = this.formatApiError(err, 'Failed to update config.');
       }
     });
   }
 
   openCompanyConfigEditModal(config: CompanyProductConfig): void {
     this.companyConfigEditModalId = config.id;
-    this.companyProductEditForm = this.companyProductFormSnapshotFromSaved(
-      config,
-      config.companyName,
-      config.productName
-    );
+    this.companyProductEditForm = this.companyProductFormSnapshotFromSaved(config);
     this.configEditModalError = '';
   }
 
   closeCompanyConfigEditModal(): void {
     this.companyConfigEditModalId = null;
     this.companyProductEditForm = {
-      companyName: '',
       productName: '',
+      productUrl: '',
       items: [{ eventName: '', score: '' }],
       warmMinScore: WorkspaceComponent.defaultStageFormValues.warmMinScore,
       mqlMinScore: WorkspaceComponent.defaultStageFormValues.mqlMinScore,
@@ -1391,28 +1394,14 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
       });
   }
 
-  onCompanyConfigFilterInput(): void {
-    if (this.companyConfigFilterSearchTimer !== undefined) {
-      clearTimeout(this.companyConfigFilterSearchTimer);
-    }
-    this.companyConfigFilterSearchTimer = setTimeout(() => {
-      this.companyConfigFilterSearchTimer = undefined;
-      this.loadCompanyConfigs();
-    }, WorkspaceComponent.companyConfigFilterDebounceMs);
-  }
-
   loadCompanyConfigs(): void {
     this.configLoading = true;
     this.configError = '';
-    const filter = this.companyNameFilter.trim();
-    const query = filter ? `?companyName=${encodeURIComponent(filter)}` : '';
-    this.http.get<CompanyProductConfig[]>(`${this.apiBase}/api/company-product-configs${query}`).subscribe({
+    this.http.get<CompanyProductConfig[]>(`${this.apiBase}/api/company-product-configs`).subscribe({
       next: (records) => {
         this.configLoading = false;
         this.companyConfigs = records;
-        if (!filter) {
-          this.companyProductAll = records;
-        }
+        this.companyProductAll = records;
         this.scheduleMainCompanyProductHydrate();
       },
       error: () => {
@@ -1426,10 +1415,10 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
     return Object.entries(config).map(([key, value]) => ({ key, value }));
   }
 
-  private resetCompanyConfigForm(defaultCompanyName = ''): void {
+  private resetCompanyConfigForm(): void {
     this.companyProductForm = {
-      companyName: defaultCompanyName,
       productName: '',
+      productUrl: '',
       items: [{ eventName: '', score: '' }],
       warmMinScore: WorkspaceComponent.defaultStageFormValues.warmMinScore,
       mqlMinScore: WorkspaceComponent.defaultStageFormValues.mqlMinScore,
@@ -1437,25 +1426,8 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
     };
   }
 
-  /** Reload company-config grid; when a name filter is active, also fetch the full list for combobox suggestions (one extra GET). */
   private reloadCompanyProductViews(): void {
     this.loadCompanyConfigs();
-    if (this.companyNameFilter.trim()) {
-      this.refreshCompanyProductIndex();
-    }
-  }
-
-  /** Full config list for combobox suggestions (unaffected by table filter). */
-  private refreshCompanyProductIndex(): void {
-    this.http.get<CompanyProductConfig[]>(`${this.apiBase}/api/company-product-configs`).subscribe({
-      next: (rows) => {
-        this.companyProductAll = rows;
-        this.scheduleMainCompanyProductHydrate();
-      },
-      error: () => {
-        /* keep previous suggestions on failure */
-      }
-    });
   }
 
   /** Absolute origin for `/r` links: same rules as `apiBase`, with origin fallback when API is same-host relative. */
@@ -1475,8 +1447,12 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
       if (err.status === 0) {
         return `${fallback} Cannot reach the API at ${this.apiBase}. Start the backend and check CORS.`;
       }
-      const body = err.error as { message?: string; detail?: string } | null;
-      const msg = body?.message ?? body?.detail;
+      const raw = err.error;
+      if (typeof raw === 'string' && raw.trim()) {
+        return raw.trim();
+      }
+      const body = raw as { message?: string; detail?: string; title?: string } | null;
+      const msg = body?.message ?? body?.detail ?? body?.title;
       if (msg) {
         return msg;
       }
@@ -1861,8 +1837,8 @@ interface StageScoreThresholds {
 }
 
 interface CompanyProductForm {
-  companyName: string;
   productName: string;
+  productUrl: string;
   items: CompanyProductEventItem[];
   warmMinScore: string;
   mqlMinScore: string;
@@ -1877,6 +1853,7 @@ interface CompanyProductEventItem {
 interface UpsertCompanyProductConfigRequest {
   companyName: string;
   productName: string;
+  productUrl: string;
   productEventConfig: Record<string, number>;
   stageThresholds?: StageScoreThresholds;
 }
@@ -1885,6 +1862,7 @@ interface CompanyProductConfig {
   id: string;
   companyName: string;
   productName: string;
+  productUrl?: string | null;
   productId: number;
   productEventConfig: Record<string, number>;
   stageThresholds?: StageScoreThresholds;

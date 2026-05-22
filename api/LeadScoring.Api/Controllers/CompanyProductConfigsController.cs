@@ -20,7 +20,7 @@ public class CompanyProductConfigsController(LeadScoringDbContext db, ITenantCon
         tenantContext.RequireTenant();
         request.CompanyName = tenantContext.CompanyName!;
 
-        if (!TryNormalizeRequest(request, out var normalizedItems, out var errorMessage))
+        if (!TryNormalizeRequest(request, out var normalizedItems, out var normalizedProductUrl, out var errorMessage))
         {
             return BadRequest(errorMessage);
         }
@@ -38,6 +38,7 @@ public class CompanyProductConfigsController(LeadScoringDbContext db, ITenantCon
             Id = Guid.NewGuid(),
             CompanyName = tenantContext.CompanyName!.Trim(),
             ProductName = request.ProductName.Trim(),
+            ProductUrl = normalizedProductUrl,
             ProductId = nextProductId,
             ProductEventConfigJson = configJson,
             StageThresholdsJson = stageJson,
@@ -58,6 +59,7 @@ public class CompanyProductConfigsController(LeadScoringDbContext db, ITenantCon
             entity.Id,
             entity.CompanyName,
             entity.ProductName,
+            entity.ProductUrl,
             entity.ProductId,
             entity.ProductEventConfigJson,
             entity.StageThresholdsJson,
@@ -72,7 +74,7 @@ public class CompanyProductConfigsController(LeadScoringDbContext db, ITenantCon
         tenantContext.RequireTenant();
         request.CompanyName = tenantContext.CompanyName!;
 
-        if (!TryNormalizeRequest(request, out var normalizedItems, out var errorMessage))
+        if (!TryNormalizeRequest(request, out var normalizedItems, out var normalizedProductUrl, out var errorMessage))
         {
             return BadRequest(errorMessage);
         }
@@ -90,6 +92,7 @@ public class CompanyProductConfigsController(LeadScoringDbContext db, ITenantCon
 
         entity.CompanyName = tenantContext.CompanyName!.Trim();
         entity.ProductName = request.ProductName.Trim();
+        entity.ProductUrl = normalizedProductUrl;
         entity.ProductEventConfigJson = JsonSerializer.Serialize(normalizedItems);
         entity.StageThresholdsJson = StageScoreThresholdsNormalizer.SerializeNormalized(stageThresholds);
 
@@ -106,6 +109,7 @@ public class CompanyProductConfigsController(LeadScoringDbContext db, ITenantCon
             entity.Id,
             entity.CompanyName,
             entity.ProductName,
+            entity.ProductUrl,
             entity.ProductId,
             entity.ProductEventConfigJson,
             entity.StageThresholdsJson,
@@ -115,25 +119,22 @@ public class CompanyProductConfigsController(LeadScoringDbContext db, ITenantCon
     }
 
     [HttpGet]
-    public async Task<IActionResult> List([FromQuery] string? companyName = null)
+    public async Task<IActionResult> List()
     {
         tenantContext.RequireTenant();
-        var query = db.CompanyProductConfigs.AsNoTracking();
-
-        if (!string.IsNullOrWhiteSpace(companyName))
-        {
-            var filter = EscapeILikeLiteral(companyName.Trim());
-            query = query.Where(x => EF.Functions.ILike(x.CompanyName, $"%{filter}%"));
-        }
+        var tenant = tenantContext.CompanyName!.Trim();
+        var tenantLower = tenant.ToLowerInvariant();
+        var query = db.CompanyProductConfigs.AsNoTracking()
+            .Where(x => x.CompanyName.ToLower() == tenantLower);
 
         var records = await query
-            .OrderBy(x => x.CompanyName)
-            .ThenBy(x => x.ProductName)
+            .OrderBy(x => x.ProductName)
             .ThenBy(x => x.ProductId)
             .Select(x => CompanyProductConfigMapper.ToDto(
                 x.Id,
                 x.CompanyName,
                 x.ProductName,
+                x.ProductUrl,
                 x.ProductId,
                 x.ProductEventConfigJson,
                 x.StageThresholdsJson,
@@ -172,12 +173,15 @@ public class CompanyProductConfigsController(LeadScoringDbContext db, ITenantCon
     private static bool TryNormalizeRequest(
         UpsertCompanyProductConfigRequest request,
         out Dictionary<string, int> normalizedItems,
+        out string normalizedProductUrl,
         out string errorMessage)
     {
+        normalizedProductUrl = string.Empty;
+
         if (string.IsNullOrWhiteSpace(request.CompanyName))
         {
             normalizedItems = new();
-            errorMessage = "Company name is required.";
+            errorMessage = "Company context is missing.";
             return false;
         }
 
@@ -185,6 +189,13 @@ public class CompanyProductConfigsController(LeadScoringDbContext db, ITenantCon
         {
             normalizedItems = new();
             errorMessage = "Product name is required.";
+            return false;
+        }
+
+        if (!ProductUrlNormalizer.TryNormalize(request.ProductUrl, out normalizedProductUrl, out var urlError))
+        {
+            normalizedItems = new();
+            errorMessage = urlError;
             return false;
         }
 
@@ -214,15 +225,8 @@ public class CompanyProductConfigsController(LeadScoringDbContext db, ITenantCon
 
     private async Task<int> GetNextProductIdAsync()
     {
-        var max = await db.CompanyProductConfigs
-            .Select(x => x.ProductId)
-            .DefaultIfEmpty(0)
-            .MaxAsync();
-        return max + 1;
+        // Avoid DefaultIfEmpty + MaxAsync: not translatable on all EF Core / Npgsql combinations.
+        var max = await db.CompanyProductConfigs.MaxAsync(x => (int?)x.ProductId);
+        return (max ?? 0) + 1;
     }
-
-    private static string EscapeILikeLiteral(string value) =>
-        value.Replace(@"\", @"\\", StringComparison.Ordinal)
-            .Replace("%", @"\%", StringComparison.Ordinal)
-            .Replace("_", @"\_", StringComparison.Ordinal);
 }
