@@ -50,6 +50,57 @@ public class PublicTenantDataConsolidationService(
         await BackfillOrphanPublicLeadsAsync(connectionString, tenants, cancellationToken);
         await leadResolutionService.DedupePublicLeadsByEmailAsync(cancellationToken);
         await RepointAllLegacyLeadTrackingAsync(connectionString, cancellationToken);
+
+        if (configuration.GetValue("DataMigration:DropLegacyTenantSchemas", false))
+        {
+            await DropLegacyTenantSchemasAsync(connectionString, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Drops <c>tenant_*</c> schemas only. Never drops <c>public</c>.
+    /// Enable with <c>DataMigration:DropLegacyTenantSchemas</c> after backup and verification.
+    /// </summary>
+    public async Task DropLegacyTenantSchemasAsync(
+        string connectionString,
+        CancellationToken cancellationToken = default)
+    {
+        await using var conn = new NpgsqlConnection(connectionString);
+        await conn.OpenAsync(cancellationToken);
+
+        await using var listCmd = new NpgsqlCommand(
+            """
+            SELECT nspname
+            FROM pg_namespace
+            WHERE nspname LIKE 'tenant\_%' ESCAPE '\'
+            ORDER BY nspname
+            """,
+            conn);
+
+        var schemas = new List<string>();
+        await using (var reader = await listCmd.ExecuteReaderAsync(cancellationToken))
+        {
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                schemas.Add(reader.GetString(0));
+            }
+        }
+
+        foreach (var schema in schemas)
+        {
+            await using var dropCmd = new NpgsqlCommand(
+                $"""DROP SCHEMA IF EXISTS "{schema.Replace("\"", "\"\"", StringComparison.Ordinal)}" CASCADE""",
+                conn);
+            await dropCmd.ExecuteNonQueryAsync(cancellationToken);
+            logger.LogWarning("Dropped legacy tenant schema {Schema}.", schema);
+        }
+
+        if (schemas.Count > 0)
+        {
+            logger.LogInformation(
+                "Dropped {Count} legacy tenant_* schema(s). public schema was not modified.",
+                schemas.Count);
+        }
     }
 
     private async Task RepointAllLegacyLeadTrackingAsync(
