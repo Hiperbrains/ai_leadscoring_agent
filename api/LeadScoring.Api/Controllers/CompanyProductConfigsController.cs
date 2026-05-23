@@ -225,8 +225,12 @@ public class CompanyProductConfigsController(LeadScoringDbContext db, ITenantCon
 
     private async Task<int> GetNextProductIdAsync()
     {
+        var tenant = tenantContext.CompanyName!.Trim();
+        var tenantLower = tenant.ToLowerInvariant();
         // Avoid DefaultIfEmpty + MaxAsync: not translatable on all EF Core / Npgsql combinations.
-        var max = await db.CompanyProductConfigs.MaxAsync(x => (int?)x.ProductId);
+        var max = await db.CompanyProductConfigs
+            .Where(x => x.CompanyName.ToLower() == tenantLower)
+            .MaxAsync(x => (int?)x.ProductId);
         return (max ?? 0) + 1;
     }
 }

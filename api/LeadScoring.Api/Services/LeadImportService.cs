@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace LeadScoring.Api.Services;
 
-public class LeadImportService(LeadScoringDbContext db)
+public class LeadImportService(LeadScoringDbContext db, ITenantLeadScope tenantLeadScope)
 {
     public async Task<LeadImportResult> ImportFromFileAsync(IFormFile file, string? source)
     {
@@ -39,6 +39,7 @@ public class LeadImportService(LeadScoringDbContext db)
 
     private async Task<LeadImportResult> ImportRowsAsync(List<LeadImportRowDto> rows)
     {
+        var companyName = await tenantLeadScope.ResolveCompanyNameAsync();
         var processed = 0;
         var imported = 0;
         var updated = 0;
@@ -67,6 +68,8 @@ public class LeadImportService(LeadScoringDbContext db)
                         Email = email,
                         FirstName = Sanitize(row.FirstName),
                         LastName = Sanitize(row.LastName),
+                        CompanyName = companyName,
+                        ProductId = TenantLeadScope.ScopedProductId,
                         CreatedAtUtc = DateTime.UtcNow,
                         LastActivityUtc = DateTime.UtcNow
                     });
@@ -76,6 +79,12 @@ public class LeadImportService(LeadScoringDbContext db)
                 {
                     existing.FirstName = Sanitize(row.FirstName) ?? existing.FirstName;
                     existing.LastName = Sanitize(row.LastName) ?? existing.LastName;
+                    if (string.IsNullOrWhiteSpace(existing.CompanyName))
+                    {
+                        existing.CompanyName = companyName;
+                    }
+
+                    existing.ProductId ??= TenantLeadScope.ScopedProductId;
                     updated++;
                 }
             }

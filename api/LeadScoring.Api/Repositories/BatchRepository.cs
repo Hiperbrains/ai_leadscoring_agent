@@ -8,7 +8,7 @@ namespace LeadScoring.Api.Repositories;
 
 /// <summary>
 /// Lead/event/email-template batch operations run against <see cref="PublicCompanyDbContext"/> with the same company scope as the dashboard.
-/// Tenant-schema <see cref="LeadScoringDbContext"/> stores batch logs, configs, legacy batch entities, etc.
+/// Shared <see cref="LeadScoringDbContext"/> (public schema) stores batch logs, configs, and legacy batch entities.
 /// </summary>
 public class BatchRepository(
     LeadScoringDbContext tenantDb,

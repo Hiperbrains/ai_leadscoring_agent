@@ -1,7 +1,6 @@
 using System.Text;
 using LeadScoring.Api.Background;
 using LeadScoring.Api.Data;
-using LeadScoring.Api.Middleware;
 using LeadScoring.Api.Repositories;
 using LeadScoring.Api.Services;
 using System.Net;
@@ -37,7 +36,7 @@ builder.Services.AddScoped<ITenantDbContextAccessor, TenantDbContextAccessor>();
 builder.Services.AddScoped<LeadScoringDbContext>(sp =>
     sp.GetRequiredService<ITenantDbContextAccessor>().GetDbContext());
 
-builder.Services.AddScoped<ITenantDatabaseProvisioner, TenantDatabaseProvisioner>();
+builder.Services.AddScoped<PublicTenantDataConsolidationService>();
 builder.Services.AddScoped<JwtAuthTokenService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 
@@ -84,6 +83,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 builder.Services.AddAuthorization();
 builder.Services.AddScoped<TokenService>();
 builder.Services.AddScoped<LeadScoringService>();
+builder.Services.AddScoped<LeadResolutionService>();
 builder.Services.AddScoped<VisitorAttributionService>();
 builder.Services.AddScoped<LeadImportService>();
 builder.Services.AddScoped<IFollowUpSubjectGenerator, OpenAiFollowUpSubjectGenerator>();
@@ -162,23 +162,14 @@ using (var scope = app.Services.CreateScope())
     var masterDb = scope.ServiceProvider.GetRequiredService<MasterDbContext>();
     await masterDb.Database.MigrateAsync();
 
-    var provisioner = scope.ServiceProvider.GetRequiredService<ITenantDatabaseProvisioner>();
-    var tenantSchemas = await masterDb.Tenants
-        .AsNoTracking()
-        .Select(t => t.DatabaseName)
-        .Distinct()
-        .ToListAsync();
-
-    foreach (var schema in tenantSchemas)
+    var consolidation = scope.ServiceProvider.GetRequiredService<PublicTenantDataConsolidationService>();
+    try
     {
-        try
-        {
-            await provisioner.EnsureReadyAsync(schema);
-        }
-        catch (Exception ex)
-        {
-            app.Logger.LogError(ex, "Could not ensure tenant schema {Schema} on startup.", schema);
-        }
+        await consolidation.ConsolidateAsync();
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogError(ex, "Could not consolidate legacy tenant schemas into public on startup.");
     }
 }
 
@@ -214,7 +205,6 @@ app.UseRouting();
 app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();
-app.UseMiddleware<TenantSchemaEnsureMiddleware>();
 
 var configuredEmailImagesPath = app.Configuration["PublicAssets:EmailImagesPhysicalPath"];
 var emailImagesSourcePath = ResolveEmailImagesSourcePath(configuredEmailImagesPath, app.Environment.ContentRootPath);

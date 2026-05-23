@@ -8,7 +8,6 @@ namespace LeadScoring.Api.Services;
 
 public class AuthService(
     MasterDbContext masterDb,
-    ITenantDatabaseProvisioner provisioner,
     JwtAuthTokenService jwtAuthTokenService,
     IConfiguration configuration) : IAuthService
 {
@@ -74,19 +73,12 @@ public class AuthService(
             throw new AuthValidationException("A company with this name is already registered.");
         }
 
-        var schemaName = TenantConnectionStringBuilder.ToSchemaName(company);
-        if (await masterDb.Tenants.AnyAsync(t => t.DatabaseName == schemaName, cancellationToken))
-        {
-            throw new AuthValidationException("This company name cannot be used. Try a slightly different name.");
-        }
-
-        await provisioner.ProvisionAsync(schemaName, cancellationToken);
-
+        var tenantId = Guid.NewGuid();
         var tenant = new Tenant
         {
-            Id = Guid.NewGuid(),
+            Id = tenantId,
             CompanyName = company,
-            DatabaseName = schemaName,
+            DatabaseName = TenantConnectionStringBuilder.ToTenantDatabaseKey(tenantId),
             SelectedPlan = plan,
             CreatedAtUtc = DateTime.UtcNow
         };

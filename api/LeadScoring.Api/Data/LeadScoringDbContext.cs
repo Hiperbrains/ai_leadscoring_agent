@@ -1,16 +1,14 @@
 using LeadScoring.Api.Models;
+using LeadScoring.Api.Services;
 using Microsoft.EntityFrameworkCore;
 
 namespace LeadScoring.Api.Data;
 
 public class LeadScoringDbContext : DbContext
 {
-    private readonly string? _tenantSchema;
-
-    public LeadScoringDbContext(DbContextOptions<LeadScoringDbContext> options, string? tenantSchema = null)
+    public LeadScoringDbContext(DbContextOptions<LeadScoringDbContext> options)
         : base(options)
     {
-        _tenantSchema = tenantSchema;
     }
 
     public DbSet<Lead> Leads => Set<Lead>();
@@ -27,10 +25,12 @@ public class LeadScoringDbContext : DbContext
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
-        if (!string.IsNullOrWhiteSpace(_tenantSchema))
-        {
-            modelBuilder.HasDefaultSchema(_tenantSchema);
-        }
+        modelBuilder.HasDefaultSchema(TenantConnectionStringBuilder.SharedSchemaName);
+
+        modelBuilder.Entity<Lead>().ToTable("Leads", "public");
+        modelBuilder.Entity<LeadEvent>().ToTable("Events", "public");
+        modelBuilder.Entity<Visitor>().ToTable("Visitors", "public");
+        modelBuilder.Entity<LeadVisitorMap>().ToTable("LeadVisitorMaps", "public");
 
         modelBuilder.Entity<Lead>().HasIndex(x => x.Email).IsUnique();
         modelBuilder.Entity<Lead>().HasIndex(x => x.VisitorId);

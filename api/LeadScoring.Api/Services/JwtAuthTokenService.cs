@@ -28,7 +28,7 @@ public class JwtAuthTokenService(IConfiguration configuration)
             new Claim("family_name", user.LastName),
             new Claim("company", tenant.CompanyName),
             new Claim("tenant_id", tenant.Id.ToString("D", CultureInfo.InvariantCulture)),
-            new Claim("tenant_db", tenant.DatabaseName),
+            new Claim("tenant_db", tenant.DatabaseName), // tenant registry key; data always in public schema
             new Claim("plan", tenant.SelectedPlan)
         };
 

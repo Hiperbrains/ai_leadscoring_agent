@@ -1,37 +1,26 @@
 using LeadScoring.Api.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 
 namespace LeadScoring.Api.Services;
 
-public class TenantDbContextAccessor(
-    ITenantContext tenantContext,
-    IConfiguration configuration) : ITenantDbContextAccessor
+/// <summary>
+/// All companies share the PostgreSQL <c>public</c> schema; isolation is by <c>CompanyName</c> / tenant id on rows.
+/// </summary>
+public class TenantDbContextAccessor(IConfiguration configuration) : ITenantDbContextAccessor
 {
     public LeadScoringDbContext GetDbContext()
     {
         var masterConnection = configuration.GetConnectionString("Hiperbrains")
             ?? throw new InvalidOperationException("Connection string 'Hiperbrains' is missing.");
 
-        if (tenantContext.IsAuthenticated)
-        {
-            tenantContext.RequireTenant();
-            var schema = tenantContext.SchemaName!;
-
-            var tenantOptions = new DbContextOptionsBuilder<LeadScoringDbContext>()
-                .UseNpgsql(masterConnection, npg =>
-                    npg.MigrationsHistoryTable("__EFMigrationsHistory", schema))
-                .AddInterceptors(new TenantSchemaConnectionInterceptor(schema))
-                .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning))
-                .Options;
-
-            return new LeadScoringDbContext(tenantOptions, schema);
-        }
-
-        var defaultOptions = new DbContextOptionsBuilder<LeadScoringDbContext>()
-            .UseNpgsql(masterConnection)
-            .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning))
+        var options = new DbContextOptionsBuilder<LeadScoringDbContext>()
+            .UseNpgsql(masterConnection, npg =>
+                npg.MigrationsHistoryTable("__EFMigrationsHistory", TenantConnectionStringBuilder.SharedSchemaName))
+            .AddInterceptors(new PublicSchemaConnectionInterceptor())
+            .ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning))
             .Options;
 
-        return new LeadScoringDbContext(defaultOptions);
+        return new LeadScoringDbContext(options);
     }
 }

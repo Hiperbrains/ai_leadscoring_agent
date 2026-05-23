@@ -35,12 +35,6 @@ public class TenantLeadScope(
     {
         var tenant = await ResolveUserTenantAsync(cancellationToken);
 
-        if (!string.IsNullOrWhiteSpace(tenantContext.SchemaName)
-            && !string.Equals(tenantContext.SchemaName, tenant.DatabaseName, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new UnauthorizedAccessException("Tenant context mismatch. Sign in again.");
-        }
-
         if (!string.IsNullOrWhiteSpace(tenantContext.CompanyName)
             && !string.Equals(
                 tenantContext.CompanyName.Trim(),

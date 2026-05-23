@@ -12,10 +12,10 @@ namespace LeadScoring.Api.Controllers;
 [Route("api/leads")]
 [Authorize]
 public class LeadsController(
-    LeadScoringDbContext db,
     ICompanyLeadDbAccessor companyLeadDb,
     LeadImportService leadImportService,
     VisitorAttributionService visitorAttributionService,
+    LeadResolutionService leadResolutionService,
     ITenantContext tenantContext,
     ITenantLeadScope tenantLeadScope) : ControllerBase
 {
@@ -81,10 +81,8 @@ public class LeadsController(
             return BadRequest("email is required.");
         }
 
-        var normalizedEmail = request.Email.Trim().ToLowerInvariant();
-        var lead = await db.Leads
-            .AsNoTracking()
-            .FirstOrDefaultAsync(x => EF.Functions.ILike(x.Email, normalizedEmail));
+        var normalizedEmail = LeadResolutionService.NormalizeEmail(request.Email);
+        var lead = await leadResolutionService.FindByEmailAsync(normalizedEmail);
 
         return Ok(new LeadEmailExistsResponse(
             Email: normalizedEmail,
