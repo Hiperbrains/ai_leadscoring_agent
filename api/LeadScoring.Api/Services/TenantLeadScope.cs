@@ -9,8 +9,14 @@ namespace LeadScoring.Api.Services;
 public class TenantLeadScope(
     IHttpContextAccessor httpContextAccessor,
     MasterDbContext masterDb,
-    ITenantContext tenantContext) : ITenantLeadScope
+    ITenantContext tenantContext,
+    IProductContext productContext,
+    IAmbientTenantState ambient) : ITenantLeadScope
 {
+    /// <summary>
+    /// Legacy/default product id used only when a tenant has not configured any products yet.
+    /// New code paths resolve the active product via <see cref="IProductContext"/>.
+    /// </summary>
     public const int ScopedProductId = 1;
 
     public string? GetCurrentUserEmail()
@@ -27,6 +33,11 @@ public class TenantLeadScope(
 
     public async Task<string> ResolveCompanyNameAsync(CancellationToken cancellationToken = default)
     {
+        if (!string.IsNullOrWhiteSpace(ambient.CompanyName))
+        {
+            return ambient.CompanyName!.Trim();
+        }
+
         var tenant = await ResolveUserTenantAsync(cancellationToken);
         return tenant.CompanyName;
     }
@@ -47,12 +58,22 @@ public class TenantLeadScope(
 
     public IQueryable<Lead> ApplyScope(IQueryable<Lead> leads, string companyName)
     {
+        var resolvedProductId = productContext.GetCurrentProductIdAsync().GetAwaiter().GetResult()
+            ?? ScopedProductId;
+        return ApplyScope(leads, companyName, resolvedProductId);
+    }
+
+    public IQueryable<Lead> ApplyScope(IQueryable<Lead> leads, string companyName, int productId)
+    {
         var normalizedCompany = companyName.Trim();
         return leads.Where(l =>
-            l.ProductId == ScopedProductId
+            l.ProductId == productId
             && l.CompanyName != null
             && EF.Functions.ILike(l.CompanyName, normalizedCompany));
     }
+
+    public Task<int?> ResolveCurrentProductIdAsync(CancellationToken cancellationToken = default)
+        => productContext.GetCurrentProductIdAsync(cancellationToken);
 
     private async Task<(string CompanyName, string DatabaseName)> ResolveUserTenantAsync(
         CancellationToken cancellationToken)

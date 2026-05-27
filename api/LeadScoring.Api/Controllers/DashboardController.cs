@@ -15,7 +15,8 @@ namespace LeadScoring.Api.Controllers;
 public class DashboardController(
     ICompanyLeadDbAccessor companyLeadDb,
     ITenantContext tenantContext,
-    ITenantLeadScope tenantLeadScope) : ControllerBase
+    ITenantLeadScope tenantLeadScope,
+    IProductContext productContext) : ControllerBase
 {
     /// <summary>KPIs and chart inputs only (no per-lead rows).</summary>
     [HttpGet("summary")]
@@ -24,8 +25,11 @@ public class DashboardController(
         tenantContext.RequireTenant();
         await tenantLeadScope.EnsureTenantContextMatchesUserAsync(cancellationToken);
         var companyName = await tenantLeadScope.ResolveCompanyNameAsync(cancellationToken);
+        var productId = await productContext.GetCurrentProductIdAsync(cancellationToken);
         var db = companyLeadDb.GetDbContext();
-        var scopedLeads = tenantLeadScope.ApplyScope(db.Leads, companyName);
+        var scopedLeads = productId is int pid
+            ? tenantLeadScope.ApplyScope(db.Leads, companyName, pid)
+            : db.Leads.Where(_ => false);
 
         var s = await BuildSummaryPayloadAsync(db, scopedLeads, companyName, cancellationToken);
         return Ok(new
@@ -46,8 +50,11 @@ public class DashboardController(
         tenantContext.RequireTenant();
         await tenantLeadScope.EnsureTenantContextMatchesUserAsync(cancellationToken);
         var companyName = await tenantLeadScope.ResolveCompanyNameAsync(cancellationToken);
+        var productId = await productContext.GetCurrentProductIdAsync(cancellationToken);
         var db = companyLeadDb.GetDbContext();
-        var scopedLeads = tenantLeadScope.ApplyScope(db.Leads, companyName);
+        var scopedLeads = productId is int pid
+            ? tenantLeadScope.ApplyScope(db.Leads, companyName, pid)
+            : db.Leads.Where(_ => false);
 
         var leads = await QueryLeadRowsAsync(db, scopedLeads, cancellationToken);
         return Ok(new { leads });
@@ -60,8 +67,11 @@ public class DashboardController(
         tenantContext.RequireTenant();
         await tenantLeadScope.EnsureTenantContextMatchesUserAsync(cancellationToken);
         var companyName = await tenantLeadScope.ResolveCompanyNameAsync(cancellationToken);
+        var productId = await productContext.GetCurrentProductIdAsync(cancellationToken);
         var db = companyLeadDb.GetDbContext();
-        var scopedLeads = tenantLeadScope.ApplyScope(db.Leads, companyName);
+        var scopedLeads = productId is int pid
+            ? tenantLeadScope.ApplyScope(db.Leads, companyName, pid)
+            : db.Leads.Where(_ => false);
 
         var summary = await BuildSummaryPayloadAsync(db, scopedLeads, companyName, cancellationToken);
         var leads = await QueryLeadRowsAsync(db, scopedLeads, cancellationToken);
@@ -183,8 +193,10 @@ public class DashboardController(
                                     : l.Stage == LeadStage.Warm
                                         ? LeadStage.Mql
                                         : LeadStage.Hot) &&
+                                (t.CompanyName == l.CompanyName || t.CompanyName == null) &&
                                 (t.ProductId == l.ProductId || t.ProductId == null))
-                    .OrderByDescending(t => t.ProductId == l.ProductId)
+                    .OrderByDescending(t => t.CompanyName == l.CompanyName)
+                    .ThenByDescending(t => t.ProductId == l.ProductId)
                     .ThenByDescending(t => t.UpdatedAt ?? t.CreatedAt)
                     .Select(t => t.Name)
                     .FirstOrDefault(),

@@ -71,6 +71,11 @@ a {
   box-sizing: border-box;
 }
 
+.app-frame--with-navbar .app-main {
+  padding-top: calc(var(--global-navbar-height) + var(--space-8));
+  min-height: calc(100vh - var(--global-navbar-height));
+}
+
 .app-frame--no-sidebar .app-main {
   margin-left: 0;
   width: 100%;
@@ -163,6 +168,10 @@ a {
     width: calc(100% - var(--sidebar-collapsed-width));
   }
 
+  .app-frame--with-navbar .app-main {
+    padding-top: calc(var(--global-navbar-height) + var(--space-6));
+  }
+
   .app-frame--no-sidebar .app-main {
     margin-left: 0;
     width: 100%;
@@ -179,6 +188,11 @@ a {
     padding-top: calc(52px + var(--space-4));
     max-width: none;
     width: 100%;
+  }
+
+  /* Global navbar is hidden on mobile, so revert padding offset. */
+  .app-frame--with-navbar .app-main {
+    padding-top: calc(52px + var(--space-4));
   }
 
   .app-frame--no-sidebar .app-main:not(.app-main--fullscreen) {

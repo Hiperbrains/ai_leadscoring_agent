@@ -29,7 +29,9 @@ builder.Services.AddDbContext<MasterDbContext>(opt =>
         warnings.Ignore(RelationalEventId.PendingModelChangesWarning));
 });
 
+builder.Services.AddScoped<IAmbientTenantState, AmbientTenantState>();
 builder.Services.AddScoped<ITenantContext, TenantContext>();
+builder.Services.AddScoped<IProductContext, ProductContext>();
 builder.Services.AddScoped<ITenantLeadScope, TenantLeadScope>();
 builder.Services.AddScoped<ICompanyLeadDbAccessor, CompanyLeadDbAccessor>();
 builder.Services.AddScoped<ITenantDbContextAccessor, TenantDbContextAccessor>();

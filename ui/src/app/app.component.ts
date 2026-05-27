@@ -2,17 +2,20 @@ import { Component, OnDestroy, OnInit } from '@angular/core';
 import { NavigationEnd, Router, RouterOutlet } from '@angular/router';
 import { filter, Subscription } from 'rxjs';
 import { SidebarComponent } from './workspace/sidebar/sidebar.component';
+import { GlobalNavbarComponent } from './shared/components/global-navbar/global-navbar.component';
 
 @Component({
   selector: 'app-root',
   standalone: true,
-  imports: [RouterOutlet, SidebarComponent],
+  imports: [RouterOutlet, SidebarComponent, GlobalNavbarComponent],
   template: `
     <div
       class="app-frame"
       [class.drawer-open]="drawerOpen"
-      [class.app-frame--no-sidebar]="!showShell">
+      [class.app-frame--no-sidebar]="!showShell"
+      [class.app-frame--with-navbar]="showShell">
       @if (showShell) {
+        <app-global-navbar />
         <header class="mobile-top-bar">
           <button type="button" class="mobile-menu-trigger" (click)="drawerOpen = !drawerOpen" aria-label="Menu">
             <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">

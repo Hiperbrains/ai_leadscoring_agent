@@ -17,9 +17,23 @@ public class BatchProcessingService(
     ILogger<BatchProcessingService> logger,
     IServiceScopeFactory scopeFactory,
     ManualBatchProgressStore progressStore,
-    ITenantLeadScope tenantLeadScope) : IBatchProcessingService
+    ITenantLeadScope tenantLeadScope,
+    IProductContext productContext,
+    ITenantContext tenantContext) : IBatchProcessingService
 {
     private sealed record SentEmailSample(int TemplateId, bool IsFollowUp, string Subject, string HtmlBody, string ExampleRecipientEmail);
+
+    private async Task<int?> ResolveActiveProductIdAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await productContext.GetCurrentProductIdAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            return null;
+        }
+    }
 
     public async Task ProcessActiveConfigsAsync(CancellationToken cancellationToken)
     {
@@ -76,13 +90,17 @@ public class BatchProcessingService(
             }
         }
 
+        var dailyProductId = await ResolveActiveProductIdAsync(cancellationToken).ConfigureAwait(false);
+        var dailyCompanyName = await tenantLeadScope.ResolveCompanyNameAsync(cancellationToken).ConfigureAwait(false);
         await batchRepository.CreateBatchLogAsync(new BatchLog
         {
             RunDate = runDateUtc,
             BatchType = batchType,
             TotalLeadsProcessed = processed,
             SuccessCount = success,
-            FailureCount = failed
+            FailureCount = failed,
+            CompanyName = dailyCompanyName,
+            ProductId = dailyProductId
         }, cancellationToken);
 
         await UpdateAdminReportAggregatesAsync(adminRecipients, stageCounts, cancellationToken);
@@ -158,13 +176,17 @@ public class BatchProcessingService(
             }
         });
 
+        var runManualProductId = await ResolveActiveProductIdAsync(cancellationToken).ConfigureAwait(false);
+        var runManualCompanyName = await tenantLeadScope.ResolveCompanyNameAsync(cancellationToken).ConfigureAwait(false);
         await batchRepository.CreateBatchLogAsync(new BatchLog
         {
             RunDate = nowUtc,
             BatchType = batchType,
             TotalLeadsProcessed = processed,
             SuccessCount = success,
-            FailureCount = failed
+            FailureCount = failed,
+            CompanyName = runManualCompanyName,
+            ProductId = runManualProductId
         }, cancellationToken);
 
         await UpdateAdminReportAggregatesAsync(adminRecipients, stageCounts, cancellationToken);
@@ -190,12 +212,25 @@ public class BatchProcessingService(
         var leads = ApplyManualMaxLeads(filtered, normalizedMaxLeads);
         var state = progressStore.CreateJob(batchType, normalizedScope, leads.Count);
 
+        // The HTTP request returns immediately after this method, so HttpContext (and thus claims +
+        // X-Product-Id) is gone by the time Task.Run executes. Capture the tenant + product the user
+        // is actually working on now and replay them inside the background DI scope; otherwise the
+        // batch repository falls back to the unauthenticated branch and pulls every lead across all
+        // products/tenants.
+        var capturedCompanyName = await tenantLeadScope.ResolveCompanyNameAsync(cancellationToken).ConfigureAwait(false);
+        var capturedProductId = await productContext.GetCurrentProductIdAsync(cancellationToken).ConfigureAwait(false);
+        var capturedSchemaName = tenantContext.SchemaName;
+        var capturedTenantId = tenantContext.TenantId;
+
         _ = Task.Run(async () =>
         {
             try
             {
-                using var scope = scopeFactory.CreateScope();
-                var scopedService = scope.ServiceProvider.GetRequiredService<IBatchProcessingService>();
+                using var backgroundScope = scopeFactory.CreateScope();
+                var ambient = backgroundScope.ServiceProvider.GetRequiredService<IAmbientTenantState>();
+                ambient.Set(capturedCompanyName, capturedSchemaName, capturedTenantId, capturedProductId);
+
+                var scopedService = backgroundScope.ServiceProvider.GetRequiredService<IBatchProcessingService>();
                 var result = await scopedService.RunManualTrackedAsync(state.JobId, batchType, normalizedScope, normalizedMaxLeads, CancellationToken.None);
                 progressStore.Complete(state.JobId, result);
             }
@@ -213,17 +248,39 @@ public class BatchProcessingService(
 
     public async Task<IReadOnlyList<BatchLogHistoryDto>> GetBatchLogHistoryAsync(int take, CancellationToken cancellationToken)
     {
-        var rows = await batchRepository.GetRecentBatchLogsAsync(take, cancellationToken).ConfigureAwait(false);
+        var companyName = await tenantLeadScope.ResolveCompanyNameAsync(cancellationToken).ConfigureAwait(false);
+        var activeProductId = await tenantLeadScope.ResolveCurrentProductIdAsync(cancellationToken).ConfigureAwait(false);
+        var rows = await batchRepository.GetRecentBatchLogsAsync(take, companyName, activeProductId, cancellationToken).ConfigureAwait(false);
+
+        var productIds = rows
+            .Where(r => r.ProductId.HasValue)
+            .Select(r => r.ProductId!.Value)
+            .Distinct()
+            .ToArray();
+
+        var productNamesById = productIds.Length == 0
+            ? new Dictionary<int, string>()
+            : await batchRepository.GetProductNamesByIdAsync(productIds, cancellationToken).ConfigureAwait(false);
+
         var list = new List<BatchLogHistoryDto>(rows.Count);
         foreach (var x in rows)
         {
+            string? productName = null;
+            if (x.ProductId.HasValue && productNamesById.TryGetValue(x.ProductId.Value, out var name))
+            {
+                productName = name;
+            }
+
             list.Add(new BatchLogHistoryDto(
                 x.BatchId,
                 x.RunDate,
                 x.BatchType,
                 x.TotalLeadsProcessed,
                 x.SuccessCount,
-                x.FailureCount));
+                x.FailureCount,
+                x.CompanyName,
+                x.ProductId,
+                productName));
         }
 
         return list;
@@ -334,13 +391,17 @@ public class BatchProcessingService(
                 progressStore.IncrementProcessed(jobId, sent);
             });
 
+        var trackedManualProductId = await ResolveActiveProductIdAsync(cancellationToken).ConfigureAwait(false);
+        var trackedManualCompanyName = await tenantLeadScope.ResolveCompanyNameAsync(cancellationToken).ConfigureAwait(false);
         await batchRepository.CreateBatchLogAsync(new BatchLog
         {
             RunDate = nowUtc,
             BatchType = batchType,
             TotalLeadsProcessed = processed,
             SuccessCount = success,
-            FailureCount = failed
+            FailureCount = failed,
+            CompanyName = trackedManualCompanyName,
+            ProductId = trackedManualProductId
         }, cancellationToken);
 
         await UpdateAdminReportAggregatesAsync(adminRecipients, stageCounts, cancellationToken);

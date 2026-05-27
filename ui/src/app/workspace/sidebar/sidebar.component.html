@@ -1,12 +1,4 @@
 <aside class="sidebar" [class.open-drawer]="drawerOpen">
-  <div class="brand">
-    <img class="brand-logo" src="/lsa-logo.png" alt="" width="32" height="32" decoding="async" />
-    <div class="brand-text">
-      <span class="brand-name">LeadScoring</span>
-      <span class="brand-muted">Workspace</span>
-    </div>
-  </div>
-
   <p class="nav-heading">MENU</p>
 
   <nav class="nav" aria-label="Primary">
@@ -49,7 +41,7 @@
     </a>
     <a
       class="nav-link"
-      title="Company Config"
+      title="Product Config"
       routerLink="/settings/company-config"
       routerLinkActive="active"
       (click)="navClick()"
@@ -64,7 +56,7 @@
           <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
         </svg>
       </span>
-      <span class="nav-label">Company Config</span>
+      <span class="nav-label">Product Config</span>
     </a>
     <a
       class="nav-link"

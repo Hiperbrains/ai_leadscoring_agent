@@ -3,6 +3,10 @@ namespace LeadScoring.Api.Models;
 public class EmailTemplate
 {
     public int TemplateId { get; set; }
+    /// <summary>
+    /// Company this template belongs to. Nullable for legacy rows before company scoping shipped.
+    /// </summary>
+    public string? CompanyName { get; set; }
     public int? ProductId { get; set; }
     public bool IsFollowUp { get; set; }
     public string Name { get; set; } = string.Empty;

@@ -110,6 +110,30 @@ public class PublicTenantDataConsolidationService(
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(cancellationToken);
 
+        // Repointing only exists to redirect references from legacy tenant_* schemas to public.
+        // Once those schemas are gone (the normal post-consolidation state), there is nothing to
+        // do, and iterating every email in public."Leads" with a per-row FindByEmailAsync becomes
+        // an O(N) startup tax that blocks Kestrel from binding. Short-circuit when no legacy
+        // schemas remain.
+        await using (var hasLegacyCmd = new NpgsqlCommand(
+            """
+            SELECT EXISTS (
+              SELECT 1 FROM pg_namespace
+              WHERE nspname LIKE 'tenant\_%' ESCAPE '\'
+            )
+            """,
+            conn))
+        {
+            var hasLegacySchemas = Convert.ToBoolean(
+                await hasLegacyCmd.ExecuteScalarAsync(cancellationToken),
+                System.Globalization.CultureInfo.InvariantCulture);
+            if (!hasLegacySchemas)
+            {
+                logger.LogDebug("Skipping legacy lead-tracking repoint; no tenant_* schemas remain.");
+                return;
+            }
+        }
+
         await using var emailsCmd = new NpgsqlCommand(
             """
             SELECT DISTINCT LOWER(TRIM("Email"))

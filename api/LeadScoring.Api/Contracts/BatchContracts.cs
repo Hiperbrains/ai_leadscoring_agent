@@ -75,7 +75,10 @@ public record BatchLogHistoryDto(
     CampaignBatchType BatchType,
     int TotalLeadsProcessed,
     int SuccessCount,
-    int FailureCount);
+    int FailureCount,
+    string? CompanyName,
+    int? ProductId,
+    string? ProductName);
 
 /// <summary>
 /// Send sequence HTML to specific inboxes without updating leads, batch logs, or admin batches (QA only).

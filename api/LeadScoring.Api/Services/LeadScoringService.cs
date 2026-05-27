@@ -145,10 +145,11 @@ public class LeadScoringService(
                 continue;
             }
 
-            var template = await db.EmailTemplates
-                .Where(t => t.IsActive && t.IsFollowUp && t.Stage == LeadStage.Cold && (t.ProductId == lead.ProductId || t.ProductId == null))
-                .OrderByDescending(t => t.ProductId == lead.ProductId)
-                .ThenByDescending(t => t.UpdatedAt ?? t.CreatedAt)
+            var template = await EmailTemplateScope.OrderForLead(
+                    EmailTemplateScope.ApplyLeadScope(
+                        db.EmailTemplates.Where(t => t.IsActive && t.IsFollowUp && t.Stage == LeadStage.Cold),
+                        lead),
+                    lead)
                 .FirstOrDefaultAsync(cancellationToken);
             if (template is null)
             {
@@ -377,15 +378,15 @@ public class LeadScoringService(
 
     private async Task SendStageEmailAsync(Lead lead)
     {
-        var template = await db.EmailTemplates
-            .Where(t =>
-                t.IsActive &&
-                !t.IsFollowUp &&
-                !EF.Functions.ILike(t.Name, "%dummy%") &&
-                t.Stage == lead.Stage &&
-                (t.ProductId == lead.ProductId || t.ProductId == null))
-            .OrderByDescending(t => t.ProductId == lead.ProductId)
-            .ThenByDescending(t => t.UpdatedAt ?? t.CreatedAt)
+        var template = await EmailTemplateScope.OrderForLead(
+                EmailTemplateScope.ApplyLeadScope(
+                    db.EmailTemplates.Where(t =>
+                        t.IsActive &&
+                        !t.IsFollowUp &&
+                        !EF.Functions.ILike(t.Name, "%dummy%") &&
+                        t.Stage == lead.Stage),
+                    lead),
+                lead)
             .FirstOrDefaultAsync();
 
         if (template is null)

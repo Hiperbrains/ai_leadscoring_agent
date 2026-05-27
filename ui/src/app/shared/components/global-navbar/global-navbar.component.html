@@ -1,0 +1,31 @@
+<nav class="global-navbar" role="navigation" aria-label="Global">
+  <a class="brand" routerLink="/dashboard">
+    <img class="brand-logo" src="/lsa-logo.png" alt="" width="28" height="28" decoding="async" />
+    <span class="brand-name">LeadScoring</span>
+  </a>
+
+  <div class="navbar-spacer"></div>
+
+  <div class="product-picker">
+    @if (productContext.hasProducts()) {
+      <label class="product-picker-label" for="globalProductSelect">Product</label>
+      <select
+        id="globalProductSelect"
+        class="product-picker-select"
+        (change)="onProductChange($event)"
+        [attr.aria-label]="'Select product'">
+        @for (option of productContext.availableProducts(); track option.productId) {
+          <option
+            [value]="option.productId"
+            [selected]="option.productId === productContext.selectedProductId()">
+            {{ option.productName }}
+          </option>
+        }
+      </select>
+    } @else {
+      <a class="product-picker-empty" routerLink="/settings/company-config">
+        No products yet — open Product Config
+      </a>
+    }
+  </div>
+</nav>

@@ -42,9 +42,10 @@ public class LeadScoringDbContext : DbContext
         modelBuilder.Entity<CompanyProductConfig>().HasIndex(x => new { x.CompanyName, x.ProductName, x.ProductId }).IsUnique();
         modelBuilder.Entity<EmailTemplate>().HasKey(x => x.TemplateId);
         modelBuilder.Entity<EmailTemplate>()
-            .HasIndex(x => new { x.Stage, x.ProductId, x.IsFollowUp })
+            .HasIndex(x => new { x.CompanyName, x.Stage, x.ProductId, x.IsFollowUp })
             .HasFilter("\"IsActive\" = true")
             .IsUnique();
+        modelBuilder.Entity<EmailTemplate>().HasIndex(x => new { x.CompanyName, x.ProductId });
 
         modelBuilder.Entity<BatchConfig>().HasKey(x => x.ConfigId);
         modelBuilder.Entity<BatchConfig>().HasIndex(x => new { x.ProductId, x.Stage, x.IsActive });
@@ -68,8 +69,9 @@ public class LeadScoringDbContext : DbContext
             .OnDelete(DeleteBehavior.Restrict);
 
         modelBuilder.Entity<BatchLog>().HasKey(x => x.BatchId);
-        modelBuilder.Entity<BatchLog>().HasIndex(x => new { x.RunDate, x.BatchType }).IsUnique();
+        modelBuilder.Entity<BatchLog>().HasIndex(x => new { x.RunDate, x.BatchType, x.CompanyName, x.ProductId }).IsUnique();
         modelBuilder.Entity<BatchLog>().HasIndex(x => x.RunDate);
+        modelBuilder.Entity<BatchLog>().HasIndex(x => new { x.CompanyName, x.ProductId });
 
         modelBuilder.Entity<AdminBatchReport>().HasKey(x => x.Id);
         modelBuilder.Entity<AdminBatchReport>().HasIndex(x => x.Email).IsUnique();

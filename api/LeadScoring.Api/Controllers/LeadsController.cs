@@ -17,7 +17,8 @@ public class LeadsController(
     VisitorAttributionService visitorAttributionService,
     LeadResolutionService leadResolutionService,
     ITenantContext tenantContext,
-    ITenantLeadScope tenantLeadScope) : ControllerBase
+    ITenantLeadScope tenantLeadScope,
+    IProductContext productContext) : ControllerBase
 {
     [HttpGet("{leadId:guid}/events")]
     public async Task<ActionResult<LeadEventsResponse>> GetLeadEvents(Guid leadId, CancellationToken cancellationToken)
@@ -25,8 +26,14 @@ public class LeadsController(
         tenantContext.RequireTenant();
         await tenantLeadScope.EnsureTenantContextMatchesUserAsync(cancellationToken);
         var companyName = await tenantLeadScope.ResolveCompanyNameAsync(cancellationToken);
+        var productId = await productContext.GetCurrentProductIdAsync(cancellationToken);
+        if (productId is null)
+        {
+            return NotFound(new { message = "Lead not found." });
+        }
+
         var companyDb = companyLeadDb.GetDbContext();
-        var lead = await tenantLeadScope.ApplyScope(companyDb.Leads, companyName)
+        var lead = await tenantLeadScope.ApplyScope(companyDb.Leads, companyName, productId.Value)
             .AsNoTracking()
             .FirstOrDefaultAsync(x => x.Id == leadId, cancellationToken);
 

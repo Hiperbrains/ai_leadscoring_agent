@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace LeadScoring.Api.Services;
 
-public class LeadImportService(LeadScoringDbContext db, ITenantLeadScope tenantLeadScope)
+public class LeadImportService(LeadScoringDbContext db, ITenantLeadScope tenantLeadScope, IProductContext productContext)
 {
     public async Task<LeadImportResult> ImportFromFileAsync(IFormFile file, string? source)
     {
@@ -40,6 +40,8 @@ public class LeadImportService(LeadScoringDbContext db, ITenantLeadScope tenantL
     private async Task<LeadImportResult> ImportRowsAsync(List<LeadImportRowDto> rows)
     {
         var companyName = await tenantLeadScope.ResolveCompanyNameAsync();
+        var activeProductId = await productContext.GetCurrentProductIdAsync()
+            ?? TenantLeadScope.ScopedProductId;
         var processed = 0;
         var imported = 0;
         var updated = 0;
@@ -69,7 +71,7 @@ public class LeadImportService(LeadScoringDbContext db, ITenantLeadScope tenantL
                         FirstName = Sanitize(row.FirstName),
                         LastName = Sanitize(row.LastName),
                         CompanyName = companyName,
-                        ProductId = TenantLeadScope.ScopedProductId,
+                        ProductId = activeProductId,
                         CreatedAtUtc = DateTime.UtcNow,
                         LastActivityUtc = DateTime.UtcNow
                     });
@@ -84,7 +86,7 @@ public class LeadImportService(LeadScoringDbContext db, ITenantLeadScope tenantL
                         existing.CompanyName = companyName;
                     }
 
-                    existing.ProductId ??= TenantLeadScope.ScopedProductId;
+                    existing.ProductId ??= activeProductId;
                     updated++;
                 }
             }

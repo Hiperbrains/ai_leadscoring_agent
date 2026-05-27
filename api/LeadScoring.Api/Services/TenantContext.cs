@@ -1,22 +1,30 @@
-using System.Globalization;
 using System.Security.Claims;
 
 namespace LeadScoring.Api.Services;
 
-public class TenantContext(IHttpContextAccessor httpContextAccessor) : ITenantContext
+public class TenantContext(
+    IHttpContextAccessor httpContextAccessor,
+    IAmbientTenantState ambient) : ITenantContext
 {
     private ClaimsPrincipal? User => httpContextAccessor.HttpContext?.User;
 
-    public bool IsAuthenticated => User?.Identity?.IsAuthenticated == true;
+    public bool IsAuthenticated =>
+        ambient.HasOverride && !string.IsNullOrWhiteSpace(ambient.CompanyName)
+        || User?.Identity?.IsAuthenticated == true;
 
-    public string? CompanyName => FindClaimValue("company");
+    public string? CompanyName => ambient.CompanyName ?? FindClaimValue("company");
 
-    public string? SchemaName => FindClaimValue("tenant_db");
+    public string? SchemaName => ambient.SchemaName ?? FindClaimValue("tenant_db");
 
     public Guid? TenantId
     {
         get
         {
+            if (ambient.TenantId.HasValue)
+            {
+                return ambient.TenantId;
+            }
+
             var raw = FindClaimValue("tenant_id");
             return Guid.TryParse(raw, out var id) ? id : null;
         }

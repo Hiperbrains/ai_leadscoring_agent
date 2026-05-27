@@ -3,6 +3,7 @@ import { HttpClient } from '@angular/common/http';
 import { Router } from '@angular/router';
 import { Observable, tap } from 'rxjs';
 import { apiUrl } from '../helpers/api-base.helper';
+import { ProductContextService } from './product-context.service';
 
 export interface AuthUser {
   id: string;
@@ -25,6 +26,7 @@ const USER_KEY = 'leadScoring.authUser';
 export class AuthService {
   private readonly http = inject(HttpClient);
   private readonly router = inject(Router);
+  private readonly productContext = inject(ProductContextService);
 
   readonly user = signal<AuthUser | null>(this.loadUser());
   readonly isLoggedIn = signal(!!this.getToken());
@@ -54,6 +56,7 @@ export class AuthService {
     localStorage.removeItem(USER_KEY);
     this.user.set(null);
     this.isLoggedIn.set(false);
+    this.productContext.clear();
     void this.router.navigate(['/login']);
   }
 

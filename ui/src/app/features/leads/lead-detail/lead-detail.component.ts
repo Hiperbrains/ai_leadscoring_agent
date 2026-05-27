@@ -1,6 +1,6 @@
 import { DatePipe, DecimalPipe, NgIf } from '@angular/common';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
-import { Component, OnInit, inject } from '@angular/core';
+import { Component, OnInit, effect, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { AppBadgeComponent } from '../../../shared/components/badge/app-badge.component';
@@ -9,6 +9,7 @@ import { AppCardComponent } from '../../../shared/components/card/app-card.compo
 import { AppComboboxComponent } from '../../../shared/components/combobox/app-combobox.component';
 import { AppTableComponent } from '../../../shared/components/table/app-table.component';
 import { WorkspaceTopBarComponent } from '../../../workspace/workspace-top-bar/workspace-top-bar.component';
+import { ProductContextService } from '../../../shared/services/product-context.service';
 
 @Component({
   selector: 'app-lead-detail',
@@ -32,6 +33,25 @@ export class LeadDetailComponent implements OnInit {
   private readonly http = inject(HttpClient);
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
+  private readonly productContext = inject(ProductContextService);
+  private productEffectSeenInitial = false;
+
+  /** Reloads the lead events when the user switches products from the global navbar. */
+  private readonly productChangeEffect = effect(() => {
+    const productId = this.productContext.selectedProductId();
+    if (productId == null) {
+      return;
+    }
+    if (!this.productEffectSeenInitial) {
+      this.productEffectSeenInitial = true;
+      return;
+    }
+    const id = this.route.snapshot.paramMap.get('leadId');
+    if (!id) {
+      return;
+    }
+    this.load(id);
+  });
 
   apiBase = this.resolveApiBase();
   loading = false;

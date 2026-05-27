@@ -20,7 +20,8 @@ public interface IBatchRepository
     Task<bool> HasEngagementSinceLastEmailAsync(Guid leadId, DateTime lastEmailSentUtc, CancellationToken cancellationToken);
     Task<EmailTemplate?> GetTemplateByBatchTypeAsync(CampaignBatchType batchType, Lead lead, CancellationToken cancellationToken);
     Task<BatchLog> CreateBatchLogAsync(BatchLog batchLog, CancellationToken cancellationToken);
-    Task<List<BatchLog>> GetRecentBatchLogsAsync(int take, CancellationToken cancellationToken);
+    Task<List<BatchLog>> GetRecentBatchLogsAsync(int take, string? companyName, int? productId, CancellationToken cancellationToken);
+    Task<Dictionary<int, string>> GetProductNamesByIdAsync(IReadOnlyCollection<int> productIds, CancellationToken cancellationToken);
     Task<AdminBatchReport> UpsertAdminReportAsync(
         string email,
         int stage0Count,

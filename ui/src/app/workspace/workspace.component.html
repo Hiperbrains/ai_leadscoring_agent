@@ -398,10 +398,10 @@
 </div>
 
 <div *ngIf="activeTab === 'company-config'">
-  <app-workspace-top-bar title="Company Config"
+  <app-workspace-top-bar title="Product Config"
     subtitle="Map funnel events and lead stage thresholds for each product on your website. Your workspace company is applied automatically." />
 
-  <app-card heading="Company Product Config">
+  <app-card heading="Product Config">
     <div class="info-banner">
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"
         aria-hidden="true">
@@ -409,7 +409,7 @@
           d="m11.25 11.25.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
       </svg>
       <div class="info-banner__text">
-        <p class="info-banner__title">How to add a company product config</p>
+        <p class="info-banner__title">How to add a product config</p>
         <p class="info-banner__body">
           Enter a <strong>product name</strong> and <strong>product URL</strong> (http or https). When the pair matches a
           saved row below, events and Warm/MQL/Hot thresholds load automatically for editing. Map each funnel event to a
@@ -489,7 +489,7 @@
     <p class="flash flash-error" *ngIf="configError">{{ configError }}</p>
   </app-card>
 
-  <app-card heading="Company Product Config List">
+  <app-card heading="Product Config List">
     <p class="caption-muted" *ngIf="configLoading">Loading configurations…</p>
     <div class="company-config-list-wrap" *ngIf="!configLoading && companyConfigs.length > 0">
       <app-table>
@@ -571,7 +571,7 @@
       (click)="closeCompanyConfigEditModal()"></div>
     <div class="company-config-edit-modal__panel" role="dialog" aria-modal="true"
       aria-labelledby="company-config-edit-title">
-      <h2 id="company-config-edit-title" class="company-config-edit-modal__title">Edit company product config</h2>
+      <h2 id="company-config-edit-title" class="company-config-edit-modal__title">Edit product config</h2>
       <p class="company-config-edit-modal__subtitle caption-muted">
         Update product name, URL, event scores, and stage thresholds for this row. Saved changes replace the mapping for
         the same workspace company.
@@ -1076,6 +1076,8 @@
           <tr>
             <th>Batch ID</th>
             <th>Run time (UTC)</th>
+            <th>Company</th>
+            <th>Product</th>
             <th>Template type</th>
             <th>Total processed</th>
             <th>Success</th>
@@ -1087,6 +1089,8 @@
           <tr *ngFor="let r of batchLogHistoryPagedRows">
             <td>{{ r.batchId | number }}</td>
             <td>{{ r.runDateUtc | date: 'yyyy-MM-dd HH:mm:ss':'UTC' }}</td>
+            <td>{{ batchLogCompanyDisplay(r) }}</td>
+            <td>{{ batchLogProductDisplay(r) }}</td>
             <td>{{ manualBatchTypeLabel(r.batchType) }}</td>
             <td>{{ r.totalLeadsProcessed | number }}</td>
             <td>{{ r.successCount | number }}</td>

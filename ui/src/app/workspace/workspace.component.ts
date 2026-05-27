@@ -1,4 +1,4 @@
-import { Component, HostListener, OnDestroy, OnInit, inject } from '@angular/core';
+import { Component, HostListener, OnDestroy, OnInit, effect, inject } from '@angular/core';
 import { DecimalPipe, DatePipe, NgFor, NgIf } from '@angular/common';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { FormsModule } from '@angular/forms';
@@ -18,6 +18,7 @@ import { StagePieChartComponent } from '../shared/components/dashboard-charts/st
 import { WorkspaceTopBarComponent } from './workspace-top-bar/workspace-top-bar.component';
 import { WEBSITE_EMBED_SCRIPT } from '../shared/constants/website-embed-script';
 import { AuthService } from '../shared/services/auth.service';
+import { ProductContextService } from '../shared/services/product-context.service';
 
 @Component({
   selector: 'app-workspace',
@@ -47,6 +48,9 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
   private readonly router = inject(Router);
   private readonly route = inject(ActivatedRoute);
   readonly auth = inject(AuthService);
+  readonly productContext = inject(ProductContextService);
+  /** First emission of `selectedProductId` after boot is the initial selection — not a switch. */
+  private productEffectSeenInitial = false;
   private copyFlashTimer?: ReturnType<typeof setTimeout>;
   private static readonly mainCompanyProductHydrateDebounceMs = 350;
   /** Default Warm/MQL/Hot minimum-score boundaries (aligned with backend legacy buckets). */
@@ -91,9 +95,17 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
   universalLinkRedirect = '';
   trackingLinkCopyStatus = '';
   linkCopiedFlash = false;
-  readonly websiteEmbedScript = WEBSITE_EMBED_SCRIPT;
   websiteScriptCopyStatus = '';
   websiteScriptCopiedFlash = false;
+
+  /**
+   * Embed snippet rewritten to fall back to the currently selected product id (was hardcoded `?? 1`).
+   * This lets companies copy the script while they have a non-default product active in the navbar.
+   */
+  get websiteEmbedScript(): string {
+    const productId = this.productContext.selectedProductId() ?? 1;
+    return WEBSITE_EMBED_SCRIPT.replace(/productId:\s*p\.productId\s*\?\?\s*\d+/, `productId: p.productId ?? ${productId}`);
+  }
   companyConfigs: CompanyProductConfig[] = [];
   /** All configs for the signed-in tenant (used for hydrate + POST vs PUT). */
   companyProductAll: CompanyProductConfig[] = [];
@@ -342,9 +354,66 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
       hotMinScore: String(st?.hotMin ?? WorkspaceComponent.defaultStageFormValues.hotMinScore)
     };
   }
+  /** Field initializer instead of constructor body — `effect()` must run in injection context. */
+  private readonly productChangeEffect = effect(() => {
+    const productId = this.productContext.selectedProductId();
+    if (productId == null) {
+      return;
+    }
+    if (!this.productEffectSeenInitial) {
+      this.productEffectSeenInitial = true;
+      return;
+    }
+    this.invalidateProductScopedCaches();
+    this.reloadActiveTab();
+  });
+
   ngOnInit(): void {
     this.syncTabFromRoute();
     this.router.events.pipe(filter((e): e is NavigationEnd => e instanceof NavigationEnd)).subscribe(() => this.syncTabFromRoute());
+    if (this.auth.isLoggedIn() && !this.productContext.loaded()) {
+      this.productContext.loadProducts().subscribe();
+    }
+  }
+
+  /** Clears per-tab caches so the next load fetches fresh, product-scoped data. */
+  private invalidateProductScopedCaches(): void {
+    this.dashboardSummary = undefined;
+    this.dashboardLeads = [];
+    this.dashboardLeadsLoaded = false;
+    this.manualPreview = undefined;
+    this.manualRunResult = undefined;
+    this.manualRunStatus = undefined;
+    this.batchLogHistoryRows = [];
+    this.batchLogHistoryPage = 1;
+    this.currentPage = 1;
+  }
+
+  /** Re-runs the loader for whatever tab the user is currently viewing. */
+  private reloadActiveTab(): void {
+    switch (this.activeTab) {
+      case 'dashboard':
+        if (!this.loadingSummary) {
+          this.loadDashboardSummary();
+        }
+        break;
+      case 'leads':
+        if (!this.loadingLeads) {
+          this.loadDashboardLeads();
+        }
+        break;
+      case 'company-config':
+        this.reloadCompanyProductViews();
+        break;
+      case 'manual-batch':
+        if (!this.manualLoading) {
+          this.previewManualBatch();
+          this.loadBatchLogHistory();
+        }
+        break;
+      default:
+        break;
+    }
   }
 
   /** Maps API stage enums to badge token keys (CSS classes). */
@@ -460,6 +529,11 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
     const redirect = this.universalLinkRedirect.trim();
     if (redirect) {
       params.set('redirect', redirect);
+    }
+
+    const productId = this.productContext.selectedProductId();
+    if (productId != null) {
+      params.set('productId', String(productId));
     }
 
     const q = params.toString();
@@ -1233,8 +1307,8 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
         this.savingConfig = false;
         const wasUpdating = updatingId !== null && updatingId.trim() !== '';
         this.configSuccess = wasUpdating
-          ? 'Company product config updated.'
-          : 'Company product config saved.';
+          ? 'Product config updated.'
+          : 'Product config saved.';
         if (!wasUpdating) {
           this.resetCompanyConfigForm();
         }
@@ -1317,7 +1391,7 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
     this.http.put<CompanyProductConfig>(`${this.apiBase}/api/company-product-configs/${id}`, payload).subscribe({
       next: () => {
         this.savingEditModal = false;
-        this.configSuccess = 'Company product config updated.';
+        this.configSuccess = 'Product config updated.';
         this.configError = '';
         this.closeCompanyConfigEditModal();
         this.reloadCompanyProductViews();
@@ -1403,10 +1477,13 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
         this.companyConfigs = records;
         this.companyProductAll = records;
         this.scheduleMainCompanyProductHydrate();
+        // Keep the global navbar dropdown aligned with whatever CRUD just happened
+        // (new product just created, product renamed, product deleted, etc.).
+        this.productContext.loadProducts().subscribe();
       },
       error: () => {
         this.configLoading = false;
-        this.configError = 'Failed to load company product configs.';
+        this.configError = 'Failed to load product configs.';
       }
     });
   }
@@ -1779,6 +1856,22 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
     const p = this.batchLogSuccessRatePct(row);
     return p === null ? '—' : `${p}%`;
   }
+
+  batchLogProductDisplay(row: BatchLogHistoryRow): string {
+    const name = (row.productName ?? '').trim();
+    if (name.length > 0) {
+      return name;
+    }
+    if (row.productId != null) {
+      return `#${row.productId}`;
+    }
+    return '—';
+  }
+
+  batchLogCompanyDisplay(row: BatchLogHistoryRow): string {
+    const name = (row.companyName ?? '').trim();
+    return name.length > 0 ? name : '—';
+  }
 }
 
 type StageName = 'Cold' | 'Warm' | 'Mql' | 'Hot';
@@ -1956,4 +2049,7 @@ interface BatchLogHistoryRow {
   totalLeadsProcessed: number;
   successCount: number;
   failureCount: number;
+  companyName: string | null;
+  productId: number | null;
+  productName: string | null;
 }

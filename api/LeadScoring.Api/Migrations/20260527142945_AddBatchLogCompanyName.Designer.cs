@@ -3,6 +3,7 @@ using System;
 using LeadScoring.Api.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace LeadScoring.Api.Migrations
 {
     [DbContext(typeof(LeadScoringDbContext))]
-    partial class LeadScoringDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260527142945_AddBatchLogCompanyName")]
+    partial class AddBatchLogCompanyName
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -281,9 +284,6 @@ namespace LeadScoring.Api.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("TemplateId"));
 
-                    b.Property<string>("CompanyName")
-                        .HasColumnType("text");
-
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -325,9 +325,7 @@ namespace LeadScoring.Api.Migrations
 
                     b.HasKey("TemplateId");
 
-                    b.HasIndex("CompanyName", "ProductId");
-
-                    b.HasIndex("CompanyName", "Stage", "ProductId", "IsFollowUp")
+                    b.HasIndex("Stage", "ProductId", "IsFollowUp")
                         .IsUnique()
                         .HasFilter("\"IsActive\" = true");
 
