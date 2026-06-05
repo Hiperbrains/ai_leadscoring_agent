@@ -35,6 +35,15 @@ export class AuthService {
     return this.http.get<{ plans: string[] }>(apiUrl('/api/auth/plans'));
   }
 
+  refreshCurrentUser(): Observable<AuthUser> {
+    return this.http.get<AuthUser>(apiUrl('/api/auth/me')).pipe(
+      tap((user) => {
+        localStorage.setItem(USER_KEY, JSON.stringify(user));
+        this.user.set(user);
+      })
+    );
+  }
+
   signup(payload: {
     firstName: string;
     lastName: string;

@@ -4,6 +4,8 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { HttpErrorResponse } from '@angular/common/http';
 import { AuthService } from '../../shared/services/auth.service';
+import { PLAN_DETAILS, signupPlanPrice } from '../../shared/constants/plan-details';
+import { normalizePlanName } from '../../shared/constants/plan-catalog';
 
 type AuthMode = 'login' | 'signup';
 type SignupStep = 1 | 2 | 3;
@@ -61,11 +63,7 @@ export class AuthPageComponent implements OnInit {
     }
   ];
 
-  readonly planDetails: Record<string, { price: string; blurb: string }> = {
-    Starter: { price: 'Free trial', blurb: 'Up to 500 leads · 1 product' },
-    Professional: { price: '$49/mo', blurb: 'Up to 5,000 leads · 5 products' },
-    Enterprise: { price: 'Custom', blurb: 'Unlimited leads · dedicated support' }
-  };
+  readonly planDetails = PLAN_DETAILS;
 
   ngOnInit(): void {
     const path = this.route.snapshot.routeConfig?.path ?? '';
@@ -73,13 +71,13 @@ export class AuthPageComponent implements OnInit {
 
     this.auth.getPlans().subscribe({
       next: (res) => {
-        this.plans = res.plans?.length ? res.plans : ['Starter', 'Professional', 'Enterprise'];
+        this.plans = res.plans?.length ? res.plans : ['Starter', 'Growth', 'Enterprise'];
         if (!this.plan) {
           this.plan = this.plans[0];
         }
       },
       error: () => {
-        this.plans = ['Starter', 'Professional', 'Enterprise'];
+        this.plans = ['Starter', 'Growth', 'Enterprise'];
         this.plan = this.plans[0];
       }
     });
@@ -158,11 +156,8 @@ export class AuthPageComponent implements OnInit {
   }
 
   planPrice(name: string): string {
-    return this.planDetails[name]?.price ?? '';
-  }
-
-  planBlurb(name: string): string {
-    return this.planDetails[name]?.blurb ?? '';
+    const normalized = normalizePlanName(name);
+    return signupPlanPrice(normalized) || (this.planDetails[normalized]?.price ?? '');
   }
 
   submitLogin(): void {
@@ -207,7 +202,9 @@ export class AuthPageComponent implements OnInit {
       .subscribe({
         next: () => {
           this.submitting = false;
-          void this.router.navigate(['/dashboard']);
+          void this.router.navigate(['/settings/payment/subcriptionsplans'], {
+            queryParams: { plan: normalizePlanName(this.plan), from: 'signup' }
+          });
         },
         error: (err: unknown) => {
           this.submitting = false;

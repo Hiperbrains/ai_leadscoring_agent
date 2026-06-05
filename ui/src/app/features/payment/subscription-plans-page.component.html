@@ -1,0 +1,117 @@
+<div class="subscription-standalone">
+  <header class="subscription-standalone__top">
+    <div class="subscription-standalone__account">
+      @if (companyName) {
+        <p class="subscription-standalone__company">{{ companyName }}</p>
+      }
+      @if (loginName) {
+        <p class="subscription-standalone__user">{{ loginName }}</p>
+      }
+      @if (currentPlan) {
+        <p class="subscription-standalone__plan">{{ currentPlan }} plan</p>
+      }
+    </div>
+    @if (fromSignup) {
+      <a routerLink="/dashboard" class="subscription-standalone__back">Skip for now</a>
+    } @else {
+      <a routerLink="/settings/payment" class="subscription-standalone__back">← Payment details</a>
+    }
+  </header>
+
+  <section class="payment-page" aria-labelledby="payment-page-title">
+    <header class="payment-page__header">
+      <h1 id="payment-page-title" class="payment-page__title">Change Subscription</h1>
+      @if (companyName) {
+        <p class="payment-page__subtitle">Plans for {{ companyName }}</p>
+      }
+    </header>
+
+    @if (loading) {
+      <p class="payment-page__loading">Loading plans…</p>
+    } @else {
+      <div class="billing-toggle" role="group" aria-label="Billing period">
+        <button
+          type="button"
+          class="billing-toggle__btn"
+          [class.billing-toggle__btn--active]="billingInterval === 'monthly'"
+          (click)="setBillingInterval('monthly')"
+        >
+          Monthly
+        </button>
+        <button
+          type="button"
+          class="billing-toggle__btn"
+          [class.billing-toggle__btn--active]="billingInterval === 'annual'"
+          (click)="setBillingInterval('annual')"
+        >
+          Annual
+          <span class="billing-toggle__save">Save {{ annualDiscountPercent }}%</span>
+        </button>
+      </div>
+
+      <div class="plans-row">
+        @for (plan of plans; track plan.name) {
+          <article
+            class="plan-card"
+            [class.plan-card--current]="plan.isCurrent"
+            [class.plan-card--popular]="plan.isMostPopular"
+            [class.plan-card--selected]="isSelected(plan)"
+          >
+            <div class="plan-card__head">
+              <div class="plan-card__price-row">
+                <div class="plan-card__price-block">
+                  <p class="plan-card__price">{{ displayPrice(plan) }}</p>
+                  <p class="plan-card__billing">{{ billingNote(plan) }}</p>
+                </div>
+                @if (plan.isCurrent) {
+                  <span class="plan-card__badge">Active Plan</span>
+                } @else if (plan.isMostPopular) {
+                  <span class="plan-card__ribbon">Most popular</span>
+                }
+              </div>
+              <h2 class="plan-card__title">{{ plan.name }}</h2>
+              <p class="plan-card__description">{{ plan.description }}</p>
+            </div>
+
+            <ul class="plan-card__features">
+              @for (feature of plan.features; track feature) {
+                <li>{{ feature }}</li>
+              }
+            </ul>
+
+            <div class="plan-card__footer">
+              @if (plan.isCurrent) {
+                <button type="button" class="plan-card__btn plan-card__btn--solid" disabled>
+                  Current plan
+                </button>
+              } @else if (plan.monthlyPrice === null) {
+                <button type="button" class="plan-card__btn plan-card__btn--outline" (click)="contactSales()">
+                  Contact us
+                </button>
+              } @else {
+                <button
+                  type="button"
+                  class="plan-card__btn plan-card__btn--outline"
+                  [disabled]="submitting"
+                  (click)="choosePlan(plan)"
+                >
+                  {{ submitting && isSelected(plan) ? 'Redirecting…' : 'Choose plan' }}
+                </button>
+              }
+            </div>
+          </article>
+        }
+      </div>
+
+      @if (!persistPayments) {
+        <p class="payment-page__note">
+          Checkout opens Stripe in test mode. Payments are not saved to your account until subscription tables are enabled.
+        </p>
+      }
+
+      @if (error) {
+        <p class="payment-page__error" role="alert">{{ error }}</p>
+      }
+    }
+  </section>
+</div>

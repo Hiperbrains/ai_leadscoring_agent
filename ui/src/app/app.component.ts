@@ -61,7 +61,10 @@ export class AppComponent implements OnInit, OnDestroy {
   private applyShellForUrl(fullUrl: string): void {
     const pathOnly = fullUrl.split('?')[0].split('#')[0];
     this.showShell =
-      pathOnly !== '/email' && pathOnly !== '/login' && pathOnly !== '/signup';
+      pathOnly !== '/email' &&
+      pathOnly !== '/login' &&
+      pathOnly !== '/signup' &&
+      pathOnly !== '/settings/payment/subcriptionsplans';
   }
   private ensureEmailGateRoute(fullUrl: string): void {
     const [pathOnly, queryRaw] = fullUrl.split('?');

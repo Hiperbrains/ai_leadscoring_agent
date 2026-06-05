@@ -36,6 +36,9 @@ jobs:
         run: |
           set -euo pipefail
 
+          echo "STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}" >> "$GITHUB_ENV"
+          echo "STRIPE_PUBLISHABLE_KEY=${{ secrets.STRIPE_PUBLISHABLE_KEY }}" >> "$GITHUB_ENV"
+
           case "${{ github.ref_name }}" in
             DEV)
               echo "ENV=DEV" >> "$GITHUB_ENV"
@@ -206,6 +209,9 @@ jobs:
             -p "${BACKEND_PORT}:8080" \
             -e ASPNETCORE_ENVIRONMENT="$ENV" \
             -e ConfigUrl="$CONFIG_URL" \
+            -e Stripe__SecretKey="$STRIPE_SECRET_KEY" \
+            -e Stripe__PublishableKey="$STRIPE_PUBLISHABLE_KEY" \
+            -e Stripe__PersistPayments="true" \
             --restart unless-stopped \
             --log-driver=awslogs \
             --log-opt awslogs-region=us-east-2 \

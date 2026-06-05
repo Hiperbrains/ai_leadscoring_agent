@@ -479,17 +479,28 @@
   }
 }
 
-/* Plan cards */
+/* Plan cards — compact name + price only */
 .plan-grid {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-3);
+}
+
+@media (max-width: 640px) {
+  .plan-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .plan-card {
   position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  min-height: 88px;
   text-align: left;
-  padding: var(--space-4) var(--space-5);
+  padding: var(--space-4) var(--space-4);
   border: 2px solid var(--color-border);
   border-radius: var(--radius-lg);
   background: #fff;
@@ -508,24 +519,18 @@
 
 .plan-name {
   display: block;
-  font-size: var(--text-md);
+  font-size: var(--text-sm);
   font-weight: var(--font-weight-semibold);
   color: var(--color-text-heading);
 }
 
 .plan-price {
   display: block;
-  font-size: var(--text-sm);
-  color: var(--color-primary-dark);
-  font-weight: var(--font-weight-medium);
-  margin-top: 2px;
-}
-
-.plan-blurb {
-  display: block;
-  font-size: var(--text-sm);
-  color: var(--color-text-muted);
-  margin-top: 4px;
+  font-size: 1.125rem;
+  color: var(--color-text-heading);
+  font-weight: var(--font-weight-bold);
+  margin-top: var(--space-1);
+  line-height: 1.2;
 }
 
 .plan-check {

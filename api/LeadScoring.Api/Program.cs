@@ -41,6 +41,7 @@ builder.Services.AddScoped<LeadScoringDbContext>(sp =>
 builder.Services.AddScoped<PublicTenantDataConsolidationService>();
 builder.Services.AddScoped<JwtAuthTokenService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<IPaymentService, PaymentService>();
 
 var jwtSigningKey = builder.Configuration["Auth:JwtSigningKey"]
     ?? builder.Configuration["Tracking:SigningKey"]

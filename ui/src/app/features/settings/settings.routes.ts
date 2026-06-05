@@ -22,5 +22,15 @@ export const settingsChildRoutes: Routes = [
     path: 'website-script',
     component: WorkspaceComponent,
     data: { workspaceTab: 'website-script' as const }
+  },
+  {
+    path: 'payment',
+    loadComponent: () =>
+      import('../payment/payment-page.component').then((m) => m.PaymentPageComponent)
+  },
+  {
+    path: 'payment/subcriptionsplans',
+    loadComponent: () =>
+      import('../payment/subscription-plans-page.component').then((m) => m.SubscriptionPlansPageComponent)
   }
 ];

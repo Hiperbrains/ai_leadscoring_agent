@@ -16,7 +16,7 @@ public class AuthService(
     public IReadOnlyList<string> GetPlans()
     {
         return configuration.GetSection("Auth:Plans").Get<string[]>()
-            ?? ["Starter", "Professional", "Enterprise"];
+            ?? ["Starter", "Growth", "Enterprise"];
     }
 
     public async Task<AuthResponse> SignupAsync(SignupRequest request, CancellationToken cancellationToken = default)

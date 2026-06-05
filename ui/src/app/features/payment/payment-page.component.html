@@ -1,0 +1,164 @@
+<section class="payment-overview" aria-labelledby="payment-overview-title">
+  <header class="payment-overview__header">
+    <h1 id="payment-overview-title" class="payment-overview__title">Payment &amp; Subscription</h1>
+    @if (summary?.companyName) {
+      <p class="payment-overview__subtitle">Company: {{ summary!.companyName }}</p>
+    }
+  </header>
+
+  @if (statusMessage) {
+    <p class="payment-overview__banner" role="status">{{ statusMessage }}</p>
+  }
+
+  @if (loading) {
+    <p class="payment-overview__loading">
+      {{ confirmingCheckout ? 'Confirming payment and saving subscription…' : 'Loading payment details…' }}
+    </p>
+  } @else if (summary) {
+    <div class="payment-overview__actions">
+      <button
+        type="button"
+        class="payment-overview__btn payment-overview__btn--primary"
+        [disabled]="renewing"
+        (click)="renewPlan()"
+      >
+        {{ renewing ? 'Redirecting…' : 'Renew your plan' }}
+      </button>
+      <button
+        type="button"
+        class="payment-overview__btn payment-overview__btn--outline"
+        (click)="changeSubscription()"
+      >
+        Change subscription
+      </button>
+    </div>
+
+    <div class="payment-overview__grid">
+      <article class="detail-card">
+        <h2 class="detail-card__title">Current plan</h2>
+        <dl class="detail-list">
+          <div class="detail-list__row">
+            <dt>Plan</dt>
+            <dd>{{ displayPlan(summary.currentPlan) }}</dd>
+          </div>
+          <div class="detail-list__row">
+            <dt>Billing</dt>
+            <dd>{{ summary.billingType ?? 'Not set' }}</dd>
+          </div>
+          <div class="detail-list__row">
+            <dt>Status</dt>
+            <dd>
+              <span class="status-pill" [class.status-pill--active]="summary.isActive">
+                {{ summary.paymentStatus ?? (summary.isActive ? 'Active' : 'Inactive') }}
+              </span>
+            </dd>
+          </div>
+          <div class="detail-list__row">
+            <dt>Started</dt>
+            <dd>{{ formatDate(summary.startDate) }}</dd>
+          </div>
+          <div class="detail-list__row">
+            <dt>Renews</dt>
+            <dd>{{ formatDate(summary.renewDate) }}</dd>
+          </div>
+          <div class="detail-list__row">
+            <dt>Expires</dt>
+            <dd>{{ formatDate(summary.expireDate) }}</dd>
+          </div>
+          <div class="detail-list__row">
+            <dt>Last payment</dt>
+            <dd>{{ formatAmount(summary.lastPaymentAmount) }}</dd>
+          </div>
+        </dl>
+      </article>
+
+      <article class="detail-card detail-card--credits">
+        <h2 class="detail-card__title">Project credits</h2>
+        <p class="credits-summary">
+          <span class="credits-summary__remaining">{{ summary.projectCreditsRemaining | number }}</span>
+          <span class="credits-summary__label">credits remaining</span>
+        </p>
+        <div class="credits-bar" aria-hidden="true">
+          <div class="credits-bar__fill" [style.width.%]="creditPercentUsed()"></div>
+        </div>
+        <dl class="detail-list detail-list--compact">
+          <div class="detail-list__row">
+            <dt>Total allocated</dt>
+            <dd>{{ summary.projectCreditsTotal | number }}</dd>
+          </div>
+          <div class="detail-list__row">
+            <dt>Used (all products)</dt>
+            <dd>{{ summary.projectCreditsUsed | number }}</dd>
+          </div>
+          <div class="detail-list__row">
+            <dt>Remaining</dt>
+            <dd>{{ summary.projectCreditsRemaining | number }}</dd>
+          </div>
+        </dl>
+        <p class="detail-card__note">Credits are shared across all products in your company.</p>
+      </article>
+    </div>
+
+    <article class="detail-card">
+      <h2 class="detail-card__title">Credit usage by product</h2>
+      @if (summary.productCreditUsage.length === 0) {
+        <p class="detail-card__empty">No products configured yet. Credits will appear here once products are set up.</p>
+      } @else {
+        <div class="product-usage-table-wrap">
+          <table class="product-usage-table">
+            <thead>
+              <tr>
+                <th scope="col">Product</th>
+                <th scope="col">Product ID</th>
+                <th scope="col">Credits used</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (item of summary.productCreditUsage; track item.productId) {
+                <tr>
+                  <td>{{ item.productName }}</td>
+                  <td>{{ item.productId }}</td>
+                  <td>{{ item.creditsUsed | number }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </article>
+
+    <article class="detail-card">
+      <h2 class="detail-card__title">Recent payments</h2>
+      @if (summary.recentPayments.length === 0) {
+        <p class="detail-card__empty">No payments recorded yet.</p>
+      } @else {
+        <div class="product-usage-table-wrap">
+          <table class="product-usage-table">
+            <thead>
+              <tr>
+                <th scope="col">Date</th>
+                <th scope="col">Amount</th>
+                <th scope="col">Status</th>
+                <th scope="col">Session</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (payment of summary.recentPayments; track payment.paymentId) {
+                <tr>
+                  <td>{{ formatDate(payment.paymentDate) }}</td>
+                  <td>{{ formatAmount(payment.amount, payment.currency) }}</td>
+                  <td>{{ payment.paymentStatus }}</td>
+                  <td class="mono">{{ payment.stripeSessionId ?? '—' }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </article>
+  }
+
+  @if (error) {
+    <p class="payment-overview__error" role="alert">{{ error }}</p>
+  }
+</section>

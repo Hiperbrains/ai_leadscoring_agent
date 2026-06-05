@@ -157,7 +157,7 @@
             <p>Tell us your organization name — we'll provision an isolated workspace.</p>
           } @else {
             <h1>Choose your plan</h1>
-            <p>Pick the tier that fits your team. You can change this later.</p>
+            <p>Select Starter or Growth — you'll complete payment on the next screen.</p>
           }
         </header>
 
@@ -270,7 +270,6 @@
               >
                 <span class="plan-name">{{ p }}</span>
                 <span class="plan-price">{{ planPrice(p) }}</span>
-                <span class="plan-blurb">{{ planBlurb(p) }}</span>
                 @if (plan === p) {
                   <span class="plan-check" aria-hidden="true">✓</span>
                 }
