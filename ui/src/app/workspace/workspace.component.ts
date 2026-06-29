@@ -156,6 +156,13 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
   private manualRunPollTimer?: ReturnType<typeof setInterval>;
   manualLoading = false;
   manualError = '';
+  batchScheduleLoading = false;
+  batchScheduleSaving = false;
+  batchScheduleError = '';
+  batchScheduleSuccess = '';
+  batchScheduleRows: BatchScheduleRowUi[] = [];
+  batchAutomationStatus?: BatchAutomationStatus;
+  readonly batchLogHistoryDays = 2;
 
   /** Template type codes for Configure send (order matches UX labels). */
   readonly manualBatchTemplateOptions: ManualBatchType[] = [
@@ -166,6 +173,20 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
     'Day2',
     'WarmFollowUp',
     'MqlFollowUp',
+    'HotFollowUp'
+  ];
+
+  /** All template types available for per-type automatic scheduling. */
+  readonly batchScheduleTemplateOptions: ManualBatchType[] = [
+    'Day1',
+    'Day2',
+    'Day3',
+    'Day4',
+    'Warm',
+    'WarmFollowUp',
+    'Mql',
+    'MqlFollowUp',
+    'Hot',
     'HotFollowUp'
   ];
 
@@ -386,6 +407,7 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
     this.manualRunStatus = undefined;
     this.batchLogHistoryRows = [];
     this.batchLogHistoryPage = 1;
+    this.batchScheduleRows = [];
     this.currentPage = 1;
   }
 
@@ -409,6 +431,9 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
         if (!this.manualLoading) {
           this.previewManualBatch();
           this.loadBatchLogHistory();
+        }
+        if (!this.batchScheduleLoading) {
+          this.loadBatchSchedule();
         }
         break;
       default:
@@ -499,6 +524,9 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
     if (tab === 'manual-batch' && !this.manualLoading) {
       this.previewManualBatch();
       this.loadBatchLogHistory();
+    }
+    if (tab === 'manual-batch' && !this.batchScheduleLoading) {
+      this.loadBatchSchedule();
     }
   }
 
@@ -1600,6 +1628,133 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
     this.previewManualBatch();
   }
 
+  loadBatchSchedule(): void {
+    this.batchScheduleError = '';
+    this.batchScheduleSuccess = '';
+    this.batchScheduleLoading = true;
+    this.http
+      .get<BatchScheduleList>(`${this.apiBase}/api/batch/schedule`)
+      .pipe(finalize(() => (this.batchScheduleLoading = false)))
+      .subscribe({
+        next: (schedule) => {
+          this.batchScheduleRows = this.batchScheduleTemplateOptions.map((batchType) => {
+            const code = this.batchTypeNameToCode(batchType);
+            const item = schedule.items.find((x) => this.normalizeBatchTypeCode(x.batchType) === code);
+            return {
+              batchType,
+              isEnabled: item?.isEnabled ?? false,
+              localTime: this.utcTimeSpanToLocalInput(item?.dailyRunTimeUtc ?? '00:30:00'),
+              lastRunUtc: item?.lastRunUtc ?? undefined,
+              nextRunUtc: item?.nextRunUtc ?? undefined,
+              isConfigured: item?.isConfigured ?? false
+            };
+          });
+          this.batchAutomationStatus = schedule.automation;
+        },
+        error: () => {
+          this.batchScheduleError = 'Could not load automatic schedule settings.';
+        }
+      });
+  }
+
+  saveBatchSchedule(): void {
+    this.batchScheduleError = '';
+    this.batchScheduleSuccess = '';
+    this.batchScheduleSaving = true;
+    const payload: UpsertBatchScheduleRequest = {
+      items: this.batchScheduleRows.map((row) => ({
+        batchType: this.batchTypeNameToCode(row.batchType),
+        isEnabled: row.isEnabled,
+        dailyRunTimeUtc: this.localInputToUtcTimeSpan(row.localTime)
+      }))
+    };
+    this.http
+      .put<BatchScheduleList>(`${this.apiBase}/api/batch/schedule`, payload)
+      .pipe(finalize(() => (this.batchScheduleSaving = false)))
+      .subscribe({
+        next: (schedule) => {
+          this.batchScheduleRows = this.batchScheduleTemplateOptions.map((batchType) => {
+            const code = this.batchTypeNameToCode(batchType);
+            const item = schedule.items.find((x) => this.normalizeBatchTypeCode(x.batchType) === code);
+            return {
+              batchType,
+              isEnabled: item?.isEnabled ?? false,
+              localTime: this.utcTimeSpanToLocalInput(item?.dailyRunTimeUtc ?? '00:30:00'),
+              lastRunUtc: item?.lastRunUtc ?? undefined,
+              nextRunUtc: item?.nextRunUtc ?? undefined,
+              isConfigured: item?.isConfigured ?? false
+            };
+          });
+          this.batchAutomationStatus = schedule.automation;
+          this.batchScheduleSuccess = 'Automatic schedules saved.';
+        },
+        error: (err) => {
+          this.batchScheduleError = this.formatApiError(err, 'Could not save automatic schedules.');
+        }
+      });
+  }
+
+  private batchTypeNameToCode(type: ManualBatchType): number {
+    const map: Record<ManualBatchType, number> = {
+      Day1: 1,
+      Day2: 2,
+      Day3: 3,
+      Day4: 4,
+      Warm: 5,
+      WarmFollowUp: 6,
+      Mql: 7,
+      MqlFollowUp: 8,
+      Hot: 9,
+      HotFollowUp: 10
+    };
+    return map[type];
+  }
+
+  private normalizeBatchTypeCode(batchType: unknown): number | null {
+    if (typeof batchType === 'number' && Number.isFinite(batchType)) {
+      return batchType;
+    }
+    if (typeof batchType === 'string') {
+      const nameToCode: Record<string, number> = {
+        Day1: 1,
+        Day2: 2,
+        Day3: 3,
+        Day4: 4,
+        Warm: 5,
+        WarmFollowUp: 6,
+        Mql: 7,
+        MqlFollowUp: 8,
+        Hot: 9,
+        HotFollowUp: 10
+      };
+      if (batchType in nameToCode) {
+        return nameToCode[batchType];
+      }
+      const parsed = Number.parseInt(batchType, 10);
+      return Number.isNaN(parsed) ? null : parsed;
+    }
+    return null;
+  }
+
+  private utcTimeSpanToLocalInput(dailyRunTimeUtc: string): string {
+    const parts = dailyRunTimeUtc.split(':').map((x) => Number.parseInt(x, 10));
+    const hours = parts[0] ?? 0;
+    const minutes = parts[1] ?? 0;
+    const seconds = parts[2] ?? 0;
+    const date = new Date();
+    date.setUTCHours(hours, minutes, seconds, 0);
+    return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+  }
+
+  private localInputToUtcTimeSpan(localTime: string): string {
+    const parts = localTime.split(':').map((x) => Number.parseInt(x, 10));
+    const hours = parts[0] ?? 0;
+    const minutes = parts[1] ?? 0;
+    const date = new Date();
+    date.setHours(hours, minutes, 0, 0);
+    return `${String(date.getUTCHours()).padStart(2, '0')}:${String(date.getUTCMinutes()).padStart(2, '0')}:00`;
+  }
+
   onManualLeadTakeChange(raw: number | string | null): void {
     const n = this.manualSelectedBucketCount;
     if (n <= 0) {
@@ -1780,7 +1935,9 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
     this.batchLogHistoryLoading = true;
     this.batchLogHistoryError = '';
     this.http
-      .get<BatchLogHistoryRow[]>(`${this.apiBase}/api/batch/history?take=200`)
+      .get<BatchLogHistoryRow[]>(
+        `${this.apiBase}/api/batch/history?take=200&days=${this.batchLogHistoryDays}`
+      )
       .pipe(finalize(() => (this.batchLogHistoryLoading = false)))
       .subscribe({
         next: (rows) => {
@@ -1871,6 +2028,31 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
   batchLogCompanyDisplay(row: BatchLogHistoryRow): string {
     const name = (row.companyName ?? '').trim();
     return name.length > 0 ? name : '—';
+  }
+
+  batchLogRunSourceLabel(runSource: number | string | undefined): string {
+    if (runSource === 'Manual' || runSource === 1) {
+      return 'Manual';
+    }
+    return 'Automatic';
+  }
+
+  batchLogAdminMirrorDisplay(row: BatchLogHistoryRow): string {
+    return row.adminMirrorSent ? 'Yes' : 'No';
+  }
+
+  automationStatusLabel(): string {
+    const s = this.batchAutomationStatus;
+    if (!s) {
+      return 'Checking automation worker…';
+    }
+    if (s.workerActive) {
+      const checked = s.workerLastCheckUtc
+        ? new Date(s.workerLastCheckUtc).toISOString().replace('T', ' ').slice(0, 19) + ' UTC'
+        : 'recently';
+      return `Automation worker active (last check ${checked}).`;
+    }
+    return 'Automation worker not detected — ensure the API is running.';
   }
 }
 
@@ -1966,6 +2148,8 @@ type LeftTab = 'dashboard' | 'leads' | 'company-config' | 'tracking-links' | 'we
 type ManualBatchType =
   | 'Day1'
   | 'Day2'
+  | 'Day3'
+  | 'Day4'
   | 'Warm'
   | 'WarmFollowUp'
   | 'Mql'
@@ -2052,4 +2236,48 @@ interface BatchLogHistoryRow {
   companyName: string | null;
   productId: number | null;
   productName: string | null;
+  runSource: number | string;
+  adminMirrorSent: boolean;
+}
+
+interface BatchAutomationStatus {
+  workerActive: boolean;
+  workerLastCheckUtc: string | null;
+  lastAutomaticRunUtc: string | null;
+  lastAutomaticRunSummary: string | null;
+}
+
+interface BatchScheduleRowUi {
+  batchType: ManualBatchType;
+  isEnabled: boolean;
+  localTime: string;
+  isConfigured: boolean;
+  lastRunUtc?: string;
+  nextRunUtc?: string;
+}
+
+interface BatchScheduleItem {
+  batchType: number | string;
+  isEnabled: boolean;
+  dailyRunTimeUtc: string;
+  isConfigured: boolean;
+  lastRunUtc: string | null;
+  nextRunUtc: string | null;
+}
+
+interface BatchScheduleList {
+  companyName: string;
+  productId: number;
+  items: BatchScheduleItem[];
+  automation: BatchAutomationStatus;
+}
+
+interface UpsertBatchScheduleItemRequest {
+  batchType: number;
+  isEnabled: boolean;
+  dailyRunTimeUtc: string;
+}
+
+interface UpsertBatchScheduleRequest {
+  items: UpsertBatchScheduleItemRequest[];
 }

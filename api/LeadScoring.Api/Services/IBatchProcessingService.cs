@@ -6,12 +6,13 @@ namespace LeadScoring.Api.Services;
 public interface IBatchProcessingService
 {
     Task ProcessActiveConfigsAsync(CancellationToken cancellationToken);
+    Task ProcessScheduledBatchAsync(CampaignBatchType batchType, CancellationToken cancellationToken);
     Task<BatchRetryResultDto> RetryFailedLeadsAsync(long sourceBatchId, CancellationToken cancellationToken);
     Task<BatchPreviewResultDto> PreviewAsync(CampaignBatchType batchType, CancellationToken cancellationToken);
     Task<BatchManualRunResultDto> RunManualAsync(CampaignBatchType batchType, string? scope, int? maxLeads, CancellationToken cancellationToken);
     Task<BatchManualRunResultDto> RunManualTrackedAsync(Guid jobId, CampaignBatchType batchType, string? scope, int? maxLeads, CancellationToken cancellationToken);
     Task<BatchManualRunStartDto> StartManualAsync(CampaignBatchType batchType, string? scope, int? maxLeads, CancellationToken cancellationToken);
     BatchManualRunStatusDto? GetManualStatus(Guid jobId);
-    Task<IReadOnlyList<BatchLogHistoryDto>> GetBatchLogHistoryAsync(int take, CancellationToken cancellationToken);
+    Task<IReadOnlyList<BatchLogHistoryDto>> GetBatchLogHistoryAsync(int take, int days, CancellationToken cancellationToken);
     Task<TestMarketingEmailResultDto> SendTestMarketingEmailsAsync(TestMarketingEmailRequestDto request, CancellationToken cancellationToken);
 }

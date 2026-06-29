@@ -78,7 +78,9 @@ public record BatchLogHistoryDto(
     int FailureCount,
     string? CompanyName,
     int? ProductId,
-    string? ProductName);
+    string? ProductName,
+    BatchRunSource RunSource,
+    bool AdminMirrorSent);
 
 /// <summary>
 /// Send sequence HTML to specific inboxes without updating leads, batch logs, or admin batches (QA only).
@@ -97,3 +99,31 @@ public record TestMarketingEmailResultDto(
     int SuccessCount,
     int FailureCount,
     IReadOnlyList<BatchFailureInfoDto> Failures);
+
+public record BatchScheduleItemDto(
+    CampaignBatchType BatchType,
+    bool IsEnabled,
+    string DailyRunTimeUtc,
+    bool IsConfigured,
+    DateTime? LastRunUtc,
+    DateTime? NextRunUtc);
+
+public record BatchScheduleListDto(
+    string CompanyName,
+    int ProductId,
+    IReadOnlyList<BatchScheduleItemDto> Items,
+    BatchAutomationStatusDto Automation);
+
+public record UpsertBatchScheduleItemRequest(
+    CampaignBatchType BatchType,
+    bool IsEnabled,
+    string DailyRunTimeUtc);
+
+public record UpsertBatchScheduleRequest(
+    IReadOnlyList<UpsertBatchScheduleItemRequest> Items);
+
+public record BatchAutomationStatusDto(
+    bool WorkerActive,
+    DateTime? WorkerLastCheckUtc,
+    DateTime? LastAutomaticRunUtc,
+    string? LastAutomaticRunSummary);

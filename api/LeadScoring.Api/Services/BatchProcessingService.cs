@@ -19,7 +19,8 @@ public class BatchProcessingService(
     ManualBatchProgressStore progressStore,
     ITenantLeadScope tenantLeadScope,
     IProductContext productContext,
-    ITenantContext tenantContext) : IBatchProcessingService
+    ITenantContext tenantContext,
+    IBatchWorkerTelemetry workerTelemetry) : IBatchProcessingService
 {
     private sealed record SentEmailSample(int TemplateId, bool IsFollowUp, string Subject, string HtmlBody, string ExampleRecipientEmail);
 
@@ -38,13 +39,60 @@ public class BatchProcessingService(
     public async Task ProcessActiveConfigsAsync(CancellationToken cancellationToken)
     {
         var runDateUtc = DateTime.UtcNow;
-        if (await batchRepository.HasBatchRunOnDateAsync(runDateUtc, cancellationToken))
+        var companyName = await TryResolveCompanyNameAsync(cancellationToken).ConfigureAwait(false);
+        var productId = await TryResolveProductIdAsync(cancellationToken).ConfigureAwait(false);
+
+        if (await batchRepository.HasBatchRunOnDateForScopeAsync(
+                runDateUtc,
+                companyName,
+                productId,
+                cancellationToken).ConfigureAwait(false))
         {
-            logger.LogInformation("Daily batch already executed for {Date}.", runDateUtc.Date);
+            logger.LogInformation(
+                "Daily batch already executed for {Date} (company={CompanyName}, product={ProductId}).",
+                runDateUtc.Date,
+                companyName ?? "(all)",
+                productId?.ToString() ?? "(all)");
             return;
         }
 
-        var batchType = await GetNextBatchTypeAsync(cancellationToken);
+        var batchType = await GetNextBatchTypeAsync(companyName, productId, cancellationToken).ConfigureAwait(false);
+        await ExecuteBatchRunAsync(batchType, runDateUtc, companyName, productId, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task ProcessScheduledBatchAsync(CampaignBatchType batchType, CancellationToken cancellationToken)
+    {
+        var runDateUtc = DateTime.UtcNow;
+        var companyName = await TryResolveCompanyNameAsync(cancellationToken).ConfigureAwait(false);
+        var productId = await TryResolveProductIdAsync(cancellationToken).ConfigureAwait(false);
+
+        if (await batchRepository.HasBatchRunOnDateForScopeAndTypeAsync(
+                runDateUtc,
+                companyName,
+                productId,
+                batchType,
+                BatchRunSource.Automatic,
+                cancellationToken).ConfigureAwait(false))
+        {
+            logger.LogInformation(
+                "Scheduled batch {BatchType} already executed for {Date} (company={CompanyName}, product={ProductId}).",
+                batchType,
+                runDateUtc.Date,
+                companyName ?? "(all)",
+                productId?.ToString() ?? "(all)");
+            return;
+        }
+
+        await ExecuteBatchRunAsync(batchType, runDateUtc, companyName, productId, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task ExecuteBatchRunAsync(
+        CampaignBatchType batchType,
+        DateTime runDateUtc,
+        string? companyName,
+        int? productId,
+        CancellationToken cancellationToken)
+    {
         var leads = await GetLeadsForBatchTypeAsync(batchType, runDateUtc, cancellationToken);
         var cycleStartUtc = runDateUtc.Date.AddDays(-3);
         var marker = $"DailySequence_{batchType}_Sent";
@@ -80,7 +128,7 @@ public class BatchProcessingService(
             stageCounts[MapStage(lead.Stage)]++;
 
             var sendResult = await ProcessLeadForBatchAsync(lead, batchType, marker, sentSamples, cancellationToken);
-            if (sendResult)
+            if (sendResult.Success)
             {
                 success++;
             }
@@ -90,8 +138,23 @@ public class BatchProcessingService(
             }
         }
 
-        var dailyProductId = await ResolveActiveProductIdAsync(cancellationToken).ConfigureAwait(false);
-        var dailyCompanyName = await tenantLeadScope.ResolveCompanyNameAsync(cancellationToken).ConfigureAwait(false);
+        var dailyProductId = productId ?? await ResolveActiveProductIdAsync(cancellationToken).ConfigureAwait(false);
+        var dailyCompanyName = companyName ?? await TryResolveCompanyNameAsync(cancellationToken).ConfigureAwait(false);
+        await UpdateAdminReportAggregatesAsync(adminRecipients, stageCounts, cancellationToken);
+        await FillAdminMirrorSamplesIfEmptyAsync(
+            batchType,
+            dailyCompanyName,
+            dailyProductId,
+            sentSamples,
+            adminRecipients,
+            cancellationToken).ConfigureAwait(false);
+        var adminMirrorSent = await SendBatchMirrorEmailToAdminsAsync(
+            adminRecipients,
+            batchType,
+            runDateUtc,
+            sentSamples.Values,
+            cancellationToken).ConfigureAwait(false);
+
         await batchRepository.CreateBatchLogAsync(new BatchLog
         {
             RunDate = runDateUtc,
@@ -100,12 +163,21 @@ public class BatchProcessingService(
             SuccessCount = success,
             FailureCount = failed,
             CompanyName = dailyCompanyName,
-            ProductId = dailyProductId
+            ProductId = dailyProductId,
+            RunSource = BatchRunSource.Automatic,
+            AdminMirrorSent = adminMirrorSent
         }, cancellationToken);
 
-        await UpdateAdminReportAggregatesAsync(adminRecipients, stageCounts, cancellationToken);
-        await SendBatchMirrorEmailToAdminsAsync(adminRecipients, batchType, runDateUtc, sentSamples.Values, cancellationToken)
-            .ConfigureAwait(false);
+        if (dailyCompanyName is not null && dailyProductId.HasValue)
+        {
+            workerTelemetry.RecordAutomaticRun(
+                dailyCompanyName,
+                dailyProductId.Value,
+                batchType,
+                success,
+                failed,
+                runDateUtc);
+        }
     }
 
     public async Task<BatchPreviewResultDto> PreviewAsync(CampaignBatchType batchType, CancellationToken cancellationToken)
@@ -164,20 +236,35 @@ public class BatchProcessingService(
             Interlocked.Increment(ref processed);
             Interlocked.Increment(ref stageCounts[MapStage(lead.Stage)]);
 
-            var sent = await ProcessLeadInIsolatedScopeAsync(lead.Id, batchType, marker, sentSamples, ct);
-            if (sent)
+            var sendResult = await ProcessLeadInIsolatedScopeAsync(lead.Id, batchType, marker, sentSamples, ct);
+            if (sendResult.Success)
             {
                 Interlocked.Increment(ref success);
             }
             else
             {
                 Interlocked.Increment(ref failed);
-                failures.Add(new BatchFailureInfoDto(lead.Id, lead.Email, "Max retries exceeded or template missing."));
+                failures.Add(new BatchFailureInfoDto(lead.Id, lead.Email, sendResult.FailureReason ?? "Send failed."));
             }
         });
 
         var runManualProductId = await ResolveActiveProductIdAsync(cancellationToken).ConfigureAwait(false);
         var runManualCompanyName = await tenantLeadScope.ResolveCompanyNameAsync(cancellationToken).ConfigureAwait(false);
+        await UpdateAdminReportAggregatesAsync(adminRecipients, stageCounts, cancellationToken);
+        await FillAdminMirrorSamplesIfEmptyAsync(
+            batchType,
+            runManualCompanyName,
+            runManualProductId,
+            sentSamples,
+            adminRecipients,
+            cancellationToken).ConfigureAwait(false);
+        var adminMirrorSent = await SendBatchMirrorEmailToAdminsAsync(
+            adminRecipients,
+            batchType,
+            nowUtc,
+            sentSamples.Values,
+            cancellationToken).ConfigureAwait(false);
+
         await batchRepository.CreateBatchLogAsync(new BatchLog
         {
             RunDate = nowUtc,
@@ -186,12 +273,10 @@ public class BatchProcessingService(
             SuccessCount = success,
             FailureCount = failed,
             CompanyName = runManualCompanyName,
-            ProductId = runManualProductId
+            ProductId = runManualProductId,
+            RunSource = BatchRunSource.Manual,
+            AdminMirrorSent = adminMirrorSent
         }, cancellationToken);
-
-        await UpdateAdminReportAggregatesAsync(adminRecipients, stageCounts, cancellationToken);
-        await SendBatchMirrorEmailToAdminsAsync(adminRecipients, batchType, nowUtc, sentSamples.Values, cancellationToken)
-            .ConfigureAwait(false);
 
         return new BatchManualRunResultDto(
             batchType,
@@ -246,11 +331,15 @@ public class BatchProcessingService(
 
     public BatchManualRunStatusDto? GetManualStatus(Guid jobId) => progressStore.GetStatus(jobId);
 
-    public async Task<IReadOnlyList<BatchLogHistoryDto>> GetBatchLogHistoryAsync(int take, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<BatchLogHistoryDto>> GetBatchLogHistoryAsync(int take, int days, CancellationToken cancellationToken)
     {
+        days = Math.Clamp(days, 1, 30);
+        var sinceUtc = DateTime.UtcNow.Date.AddDays(-(days - 1));
         var companyName = await tenantLeadScope.ResolveCompanyNameAsync(cancellationToken).ConfigureAwait(false);
         var activeProductId = await tenantLeadScope.ResolveCurrentProductIdAsync(cancellationToken).ConfigureAwait(false);
-        var rows = await batchRepository.GetRecentBatchLogsAsync(take, companyName, activeProductId, cancellationToken).ConfigureAwait(false);
+        var rows = await batchRepository
+            .GetRecentBatchLogsAsync(take, companyName, activeProductId, sinceUtc, cancellationToken)
+            .ConfigureAwait(false);
 
         var productIds = rows
             .Where(r => r.ProductId.HasValue)
@@ -280,7 +369,9 @@ public class BatchProcessingService(
                 x.FailureCount,
                 x.CompanyName,
                 x.ProductId,
-                productName));
+                productName,
+                x.RunSource,
+                x.AdminMirrorSent));
         }
 
         return list;
@@ -377,22 +468,37 @@ public class BatchProcessingService(
                 Interlocked.Increment(ref processed);
                 Interlocked.Increment(ref stageCounts[MapStage(lead.Stage)]);
 
-                var sent = await ProcessLeadInIsolatedScopeAsync(lead.Id, batchType, marker, sentSamples, ct);
-                if (sent)
+                var sendResult = await ProcessLeadInIsolatedScopeAsync(lead.Id, batchType, marker, sentSamples, ct);
+                if (sendResult.Success)
                 {
                     Interlocked.Increment(ref success);
                 }
                 else
                 {
                     Interlocked.Increment(ref failed);
-                    failures.Add(new BatchFailureInfoDto(lead.Id, lead.Email, "Max retries exceeded or template missing."));
+                    failures.Add(new BatchFailureInfoDto(lead.Id, lead.Email, sendResult.FailureReason ?? "Send failed."));
                 }
 
-                progressStore.IncrementProcessed(jobId, sent);
+                progressStore.IncrementProcessed(jobId, sendResult.Success);
             });
 
         var trackedManualProductId = await ResolveActiveProductIdAsync(cancellationToken).ConfigureAwait(false);
         var trackedManualCompanyName = await tenantLeadScope.ResolveCompanyNameAsync(cancellationToken).ConfigureAwait(false);
+        await UpdateAdminReportAggregatesAsync(adminRecipients, stageCounts, cancellationToken);
+        await FillAdminMirrorSamplesIfEmptyAsync(
+            batchType,
+            trackedManualCompanyName,
+            trackedManualProductId,
+            sentSamples,
+            adminRecipients,
+            cancellationToken).ConfigureAwait(false);
+        var trackedAdminMirrorSent = await SendBatchMirrorEmailToAdminsAsync(
+            adminRecipients,
+            batchType,
+            nowUtc,
+            sentSamples.Values,
+            cancellationToken).ConfigureAwait(false);
+
         await batchRepository.CreateBatchLogAsync(new BatchLog
         {
             RunDate = nowUtc,
@@ -401,12 +507,10 @@ public class BatchProcessingService(
             SuccessCount = success,
             FailureCount = failed,
             CompanyName = trackedManualCompanyName,
-            ProductId = trackedManualProductId
+            ProductId = trackedManualProductId,
+            RunSource = BatchRunSource.Manual,
+            AdminMirrorSent = trackedAdminMirrorSent
         }, cancellationToken);
-
-        await UpdateAdminReportAggregatesAsync(adminRecipients, stageCounts, cancellationToken);
-        await SendBatchMirrorEmailToAdminsAsync(adminRecipients, batchType, nowUtc, sentSamples.Values, cancellationToken)
-            .ConfigureAwait(false);
 
         return new BatchManualRunResultDto(
             batchType,
@@ -416,7 +520,7 @@ public class BatchProcessingService(
             failures.ToList());
     }
 
-    private async Task<bool> ProcessLeadInIsolatedScopeAsync(
+    private async Task<(bool Success, string? FailureReason)> ProcessLeadInIsolatedScopeAsync(
         Guid leadId,
         CampaignBatchType batchType,
         string marker,
@@ -429,7 +533,7 @@ public class BatchProcessingService(
         var lead = await scopedRepository.GetLeadForUpdateAsync(leadId, cancellationToken);
         if (lead is null)
         {
-            return false;
+            return (false, "Lead not found.");
         }
 
         return await ProcessLeadForBatchAsync(scopedRepository, lead, batchType, marker, sentSamples, cancellationToken);
@@ -571,9 +675,9 @@ public class BatchProcessingService(
             else
             {
                 var result = await ProcessLeadForBatchAsync(lead, CampaignBatchType.Day3, "RetryBatchSent", sentSamples, cancellationToken);
-                batchLead.Status = result ? BatchLeadStatus.Success : BatchLeadStatus.Failed;
-                batchLead.ErrorMessage = result ? null : "Retry failed.";
-                if (result)
+                batchLead.Status = result.Success ? BatchLeadStatus.Success : BatchLeadStatus.Failed;
+                batchLead.ErrorMessage = result.Success ? null : (result.FailureReason ?? "Retry failed.");
+                if (result.Success)
                 {
                     successCount++;
                 }
@@ -602,7 +706,7 @@ public class BatchProcessingService(
             retryBatch.Status);
     }
 
-    private async Task<bool> ProcessLeadForBatchAsync(
+    private async Task<(bool Success, string? FailureReason)> ProcessLeadForBatchAsync(
         Lead lead,
         CampaignBatchType batchType,
         string marker,
@@ -610,7 +714,7 @@ public class BatchProcessingService(
         CancellationToken cancellationToken)
         => await ProcessLeadForBatchAsync(batchRepository, lead, batchType, marker, sentSamples, cancellationToken);
 
-    private async Task<bool> ProcessLeadForBatchAsync(
+    private async Task<(bool Success, string? FailureReason)> ProcessLeadForBatchAsync(
         IBatchRepository repository,
         Lead lead,
         CampaignBatchType batchType,
@@ -621,7 +725,7 @@ public class BatchProcessingService(
         var template = await repository.GetTemplateByBatchTypeAsync(batchType, lead, cancellationToken);
         if (template is null)
         {
-            return false;
+            return (false, $"No active email template found for {batchType} (company={lead.CompanyName ?? "n/a"}, product={lead.ProductId}).");
         }
 
         var eventName = $"batch_{batchType.ToString().ToLowerInvariant()}";
@@ -630,7 +734,7 @@ public class BatchProcessingService(
         var sent = await SendWithRetryAsync(lead.Email, template.Subject, resolvedBody, template.IsFollowUp, cancellationToken);
         if (!sent)
         {
-            return false;
+            return (false, "Email send failed after retries.");
         }
 
         sentSamples.TryAdd(
@@ -660,7 +764,7 @@ public class BatchProcessingService(
         }, cancellationToken);
 
         await repository.SaveChangesAsync(cancellationToken);
-        return true;
+        return (true, null);
     }
 
     private async Task<bool> SendWithRetryAsync(
@@ -765,7 +869,59 @@ public class BatchProcessingService(
         _ => batchType.ToString()
     };
 
-    private async Task SendBatchMirrorEmailToAdminsAsync(
+    private static IReadOnlyList<LeadStage> GetStagesForAdminMirror(CampaignBatchType batchType) => batchType switch
+    {
+        CampaignBatchType.Day1 or CampaignBatchType.Day2 => [LeadStage.Cold],
+        CampaignBatchType.Day3 => [LeadStage.Warm, LeadStage.Mql, LeadStage.Hot],
+        CampaignBatchType.Day4 => [LeadStage.Mql, LeadStage.Hot],
+        CampaignBatchType.Warm or CampaignBatchType.WarmFollowUp => [LeadStage.Warm],
+        CampaignBatchType.Mql or CampaignBatchType.MqlFollowUp => [LeadStage.Mql],
+        CampaignBatchType.Hot or CampaignBatchType.HotFollowUp => [LeadStage.Hot],
+        _ => [LeadStage.Cold]
+    };
+
+    private async Task FillAdminMirrorSamplesIfEmptyAsync(
+        CampaignBatchType batchType,
+        string? companyName,
+        int? productId,
+        ConcurrentDictionary<int, SentEmailSample> sentSamples,
+        IReadOnlyList<string> adminRecipients,
+        CancellationToken cancellationToken)
+    {
+        if (!sentSamples.IsEmpty)
+        {
+            return;
+        }
+
+        var previewEmail = adminRecipients.FirstOrDefault() ?? "admin@preview.local";
+        foreach (var stage in GetStagesForAdminMirror(batchType))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var surrogate = new Lead
+            {
+                Id = Guid.NewGuid(),
+                Email = previewEmail,
+                CompanyName = companyName,
+                ProductId = productId,
+                Stage = stage
+            };
+
+            var template = await batchRepository.GetTemplateByBatchTypeAsync(batchType, surrogate, cancellationToken)
+                .ConfigureAwait(false);
+            if (template is null)
+            {
+                continue;
+            }
+
+            var resolvedBody = ComposeBatchEmailHtml(template, surrogate, batchType, useTrackedCta: false);
+            sentSamples.TryAdd(
+                template.TemplateId,
+                new SentEmailSample(template.TemplateId, template.IsFollowUp, template.Subject, resolvedBody, previewEmail));
+        }
+    }
+
+    private async Task<bool> SendBatchMirrorEmailToAdminsAsync(
         IReadOnlyList<string> adminRecipients,
         CampaignBatchType batchType,
         DateTime runUtc,
@@ -775,7 +931,7 @@ public class BatchProcessingService(
         var ordered = samples.Where(s => !s.IsFollowUp).OrderBy(s => s.TemplateId).ToList();
         if (adminRecipients.Count == 0 || ordered.Count == 0)
         {
-            return;
+            return false;
         }
 
         var subject = ordered.Count == 1
@@ -819,6 +975,8 @@ public class BatchProcessingService(
                 logger.LogError(ex, "Failed to send batch mirror email to {Recipient}.", recipient);
             }
         }
+
+        return true;
     }
 
     private async Task SendAdminEmailWithoutBccAsync(string to, string subject, string htmlBody, CancellationToken cancellationToken)
@@ -970,9 +1128,16 @@ public class BatchProcessingService(
         return OutboundEmailRecipientLinkRewrite.ApplyRecipientEmailToHiperbrainsLinks(resolvedBody, lead.Email);
     }
 
-    private async Task<CampaignBatchType> GetNextBatchTypeAsync(CancellationToken cancellationToken)
+    private async Task<CampaignBatchType> GetNextBatchTypeAsync(
+        string? companyName,
+        int? productId,
+        CancellationToken cancellationToken)
     {
-        var last = await batchRepository.GetLastCompletedDailyBatchTypeAsync(cancellationToken);
+        var last = companyName is not null || productId.HasValue
+            ? await batchRepository.GetLastCompletedDailyBatchTypeForScopeAsync(companyName, productId, cancellationToken)
+                .ConfigureAwait(false)
+            : await batchRepository.GetLastCompletedDailyBatchTypeAsync(cancellationToken).ConfigureAwait(false);
+
         return last switch
         {
             null => CampaignBatchType.Day1,
@@ -981,6 +1146,30 @@ public class BatchProcessingService(
             CampaignBatchType.Day3 => CampaignBatchType.Day4,
             _ => CampaignBatchType.Day1
         };
+    }
+
+    private async Task<string?> TryResolveCompanyNameAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await tenantLeadScope.ResolveCompanyNameAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private async Task<int?> TryResolveProductIdAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await productContext.GetCurrentProductIdAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private async Task<List<Lead>> GetLeadsForBatchTypeAsync(CampaignBatchType batchType, DateTime runDateUtc, CancellationToken cancellationToken)

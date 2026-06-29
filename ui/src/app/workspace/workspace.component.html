@@ -821,6 +821,70 @@
 <div *ngIf="activeTab === 'manual-batch'">
   <app-workspace-top-bar title="Manual batch" subtitle="Send cold through hot sequence emails outside the automated schedule." />
 
+  <app-card heading="Automatic daily schedule"
+    subheading="Set enable and daily run time per template type for the current company and product. The server checks every minute and runs each enabled type once per day.">
+    <p *ngIf="batchScheduleLoading" class="caption-muted">Loading schedule settings…</p>
+
+    <div *ngIf="!batchScheduleLoading" class="batch-automation-status" [class.batch-automation-status--active]="batchAutomationStatus?.workerActive">
+      <p class="batch-automation-status__line">{{ automationStatusLabel() }}</p>
+      <p class="caption-muted" *ngIf="batchAutomationStatus?.lastAutomaticRunUtc">
+        Last automatic run:
+        {{ batchAutomationStatus!.lastAutomaticRunUtc! | date:'yyyy-MM-dd HH:mm:ss':'UTC' }}
+        <span *ngIf="batchAutomationStatus?.lastAutomaticRunSummary"> — {{ batchAutomationStatus!.lastAutomaticRunSummary }}</span>
+      </p>
+    </div>
+
+    <app-table *ngIf="!batchScheduleLoading && batchScheduleRows.length > 0">
+      <table class="batch-schedule-table">
+        <thead>
+          <tr>
+            <th>Template type</th>
+            <th>Enable</th>
+            <th>Daily run time (local)</th>
+            <th>Next run (UTC)</th>
+            <th>Last automatic run (UTC)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr *ngFor="let row of batchScheduleRows">
+            <td>{{ manualBatchTypeLabel(row.batchType) }}</td>
+            <td>
+              <input type="checkbox" [(ngModel)]="row.isEnabled" [disabled]="batchScheduleSaving" />
+            </td>
+            <td>
+              <input class="batch-schedule-time-input" type="time" [(ngModel)]="row.localTime"
+                [disabled]="batchScheduleSaving" />
+            </td>
+            <td class="cell-muted">
+              <ng-container *ngIf="row.isEnabled && row.nextRunUtc; else noNextRun">
+                {{ row.nextRunUtc | date:'yyyy-MM-dd HH:mm:ss':'UTC' }}
+              </ng-container>
+              <ng-template #noNextRun>—</ng-template>
+            </td>
+            <td class="cell-muted">
+              <ng-container *ngIf="row.lastRunUtc; else noLastRun">
+                {{ row.lastRunUtc | date:'yyyy-MM-dd HH:mm:ss':'UTC' }}
+              </ng-container>
+              <ng-template #noLastRun>—</ng-template>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </app-table>
+
+    <p class="caption-muted">Times are saved as UTC on the server using your browser timezone.</p>
+
+    <p class="invalid-msg" *ngIf="batchScheduleError">{{ batchScheduleError }}</p>
+    <p class="caption-muted" *ngIf="batchScheduleSuccess">{{ batchScheduleSuccess }}</p>
+
+    <div class="manual-batch-footer-actions">
+      <app-button variant="primary" (click)="saveBatchSchedule()"
+        [disabled]="batchScheduleLoading || batchScheduleSaving || batchScheduleRows.length === 0">
+        {{ batchScheduleSaving ? 'Saving…' : 'Save schedules' }}
+      </app-button>
+    </div>
+  </app-card>
+
   <app-card heading="Configure send"
     subheading="Choose the email template type and audience segment, confirm how many recipients to include, then send.">
     <div class="manual-batch-field manual-batch-field--type">
@@ -1056,7 +1120,7 @@
   <app-card>
     <header class="batch-log-card-header">
       <div class="batch-log-card-header__text">
-        <h3 class="batch-log-card-header__title">Batch history</h3>
+        <h3 class="batch-log-card-header__title">Batch history (last {{ batchLogHistoryDays }} days)</h3>
         <p class="batch-log-card-header__sub">
           Scheduled automation and manual sends, newest first. All times UTC.
         </p>
@@ -1078,10 +1142,12 @@
             <th>Run time (UTC)</th>
             <th>Company</th>
             <th>Product</th>
+            <th>Source</th>
             <th>Template type</th>
             <th>Total processed</th>
             <th>Success</th>
             <th>Failed</th>
+            <th>Admin template sent</th>
             <th>Success rate</th>
           </tr>
         </thead>
@@ -1091,10 +1157,12 @@
             <td>{{ r.runDateUtc | date: 'yyyy-MM-dd HH:mm:ss':'UTC' }}</td>
             <td>{{ batchLogCompanyDisplay(r) }}</td>
             <td>{{ batchLogProductDisplay(r) }}</td>
+            <td>{{ batchLogRunSourceLabel(r.runSource) }}</td>
             <td>{{ manualBatchTypeLabel(r.batchType) }}</td>
             <td>{{ r.totalLeadsProcessed | number }}</td>
             <td>{{ r.successCount | number }}</td>
             <td>{{ r.failureCount | number }}</td>
+            <td>{{ batchLogAdminMirrorDisplay(r) }}</td>
             <td>{{ batchLogSuccessRateDisplay(r) }}</td>
           </tr>
         </tbody>

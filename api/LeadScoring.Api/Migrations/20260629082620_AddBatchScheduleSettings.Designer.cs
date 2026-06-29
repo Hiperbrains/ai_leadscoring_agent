@@ -3,6 +3,7 @@ using System;
 using LeadScoring.Api.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace LeadScoring.Api.Migrations
 {
     [DbContext(typeof(LeadScoringDbContext))]
-    partial class LeadScoringDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260629082620_AddBatchScheduleSettings")]
+    partial class AddBatchScheduleSettings
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -202,9 +205,6 @@ namespace LeadScoring.Api.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("BatchId"));
 
-                    b.Property<bool>("AdminMirrorSent")
-                        .HasColumnType("boolean");
-
                     b.Property<int>("BatchType")
                         .HasColumnType("integer");
 
@@ -219,9 +219,6 @@ namespace LeadScoring.Api.Migrations
 
                     b.Property<DateTime>("RunDate")
                         .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("RunSource")
-                        .HasColumnType("integer");
 
                     b.Property<int>("SuccessCount")
                         .HasColumnType("integer");
@@ -249,9 +246,6 @@ namespace LeadScoring.Api.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
 
-                    b.Property<int>("BatchType")
-                        .HasColumnType("integer");
-
                     b.Property<string>("CompanyName")
                         .IsRequired()
                         .HasColumnType("text");
@@ -270,7 +264,7 @@ namespace LeadScoring.Api.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("CompanyName", "ProductId", "BatchType")
+                    b.HasIndex("CompanyName", "ProductId")
                         .IsUnique();
 
                     b.ToTable("BatchScheduleSettings", "public");

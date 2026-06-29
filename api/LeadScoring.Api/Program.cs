@@ -96,7 +96,9 @@ builder.Services.AddHttpClient(nameof(OpenAiFollowUpSubjectGenerator), client =>
 });
 builder.Services.AddScoped<IBatchRepository, BatchRepository>();
 builder.Services.AddScoped<IBatchProcessingService, BatchProcessingService>();
+builder.Services.AddScoped<IBatchScheduleService, BatchScheduleService>();
 builder.Services.AddSingleton<ManualBatchProgressStore>();
+builder.Services.AddSingleton<IBatchWorkerTelemetry, BatchWorkerTelemetry>();
 builder.Services.AddHttpClient(nameof(UserSignupStatusService), client =>
 {
     client.Timeout = TimeSpan.FromSeconds(30);

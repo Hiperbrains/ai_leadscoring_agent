@@ -6,7 +6,23 @@ namespace LeadScoring.Api.Repositories;
 public interface IBatchRepository
 {
     Task<bool> HasBatchRunOnDateAsync(DateTime runDateUtc, CancellationToken cancellationToken);
+    Task<bool> HasBatchRunOnDateForScopeAsync(DateTime runDateUtc, string? companyName, int? productId, CancellationToken cancellationToken);
+    Task<bool> HasBatchRunOnDateForScopeAndTypeAsync(
+        DateTime runDateUtc,
+        string? companyName,
+        int? productId,
+        CampaignBatchType batchType,
+        BatchRunSource? runSource,
+        CancellationToken cancellationToken);
     Task<CampaignBatchType?> GetLastCompletedDailyBatchTypeAsync(CancellationToken cancellationToken);
+    Task<CampaignBatchType?> GetLastCompletedDailyBatchTypeForScopeAsync(string? companyName, int? productId, CancellationToken cancellationToken);
+    Task<DateTime?> GetLastBatchRunUtcForScopeAsync(string companyName, int productId, CancellationToken cancellationToken);
+    Task<DateTime?> GetLastBatchRunUtcForScopeAndTypeAsync(
+        string companyName,
+        int productId,
+        CampaignBatchType batchType,
+        BatchRunSource? runSource,
+        CancellationToken cancellationToken);
     Task<List<Lead>> GetDay1LeadsAsync(DateTime runDateUtc, CancellationToken cancellationToken);
     Task<List<Lead>> GetDay2LeadsAsync(DateTime runDateUtc, CancellationToken cancellationToken);
     Task<List<Lead>> GetDay3LeadsAsync(DateTime runDateUtc, CancellationToken cancellationToken);
@@ -20,7 +36,12 @@ public interface IBatchRepository
     Task<bool> HasEngagementSinceLastEmailAsync(Guid leadId, DateTime lastEmailSentUtc, CancellationToken cancellationToken);
     Task<EmailTemplate?> GetTemplateByBatchTypeAsync(CampaignBatchType batchType, Lead lead, CancellationToken cancellationToken);
     Task<BatchLog> CreateBatchLogAsync(BatchLog batchLog, CancellationToken cancellationToken);
-    Task<List<BatchLog>> GetRecentBatchLogsAsync(int take, string? companyName, int? productId, CancellationToken cancellationToken);
+    Task<List<BatchLog>> GetRecentBatchLogsAsync(
+        int take,
+        string? companyName,
+        int? productId,
+        DateTime? sinceUtc,
+        CancellationToken cancellationToken);
     Task<Dictionary<int, string>> GetProductNamesByIdAsync(IReadOnlyCollection<int> productIds, CancellationToken cancellationToken);
     Task<AdminBatchReport> UpsertAdminReportAsync(
         string email,

@@ -11,15 +11,50 @@ namespace LeadScoring.Api.Controllers;
 [Authorize]
 public class BatchController(
     IBatchProcessingService batchProcessingService,
+    IBatchScheduleService batchScheduleService,
     ITenantContext tenantContext,
     ILogger<BatchController> logger) : ControllerBase
 {
+    [HttpGet("schedule")]
+    public async Task<IActionResult> GetSchedule(CancellationToken cancellationToken)
+    {
+        tenantContext.RequireTenant();
+        var schedule = await batchScheduleService.GetForCurrentTenantAsync(cancellationToken);
+        return Ok(schedule);
+    }
+
+    [HttpPut("schedule")]
+    public async Task<IActionResult> UpsertSchedule(
+        [FromBody] UpsertBatchScheduleRequest request,
+        CancellationToken cancellationToken)
+    {
+        tenantContext.RequireTenant();
+        try
+        {
+            var schedule = await batchScheduleService.UpsertForCurrentTenantAsync(request, cancellationToken);
+            return Ok(schedule);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to save batch schedule.");
+            return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Could not save batch schedule." });
+        }
+    }
+
     [HttpGet("history")]
-    public async Task<IActionResult> History([FromQuery] int take = 200, CancellationToken cancellationToken = default)
+    public async Task<IActionResult> History(
+        [FromQuery] int take = 200,
+        [FromQuery] int days = 2,
+        CancellationToken cancellationToken = default)
     {
         tenantContext.RequireTenant();
         take = Math.Clamp(take, 1, 500);
-        var rows = await batchProcessingService.GetBatchLogHistoryAsync(take, cancellationToken);
+        days = Math.Clamp(days, 1, 30);
+        var rows = await batchProcessingService.GetBatchLogHistoryAsync(take, days, cancellationToken);
         return Ok(rows);
     }
 

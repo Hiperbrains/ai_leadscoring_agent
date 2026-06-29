@@ -45,17 +45,134 @@ public class BatchRepository(
     }
 
     public Task<bool> HasBatchRunOnDateAsync(DateTime runDateUtc, CancellationToken cancellationToken)
+        => HasBatchRunOnDateForScopeAsync(runDateUtc, companyName: null, productId: null, cancellationToken);
+
+    public Task<bool> HasBatchRunOnDateForScopeAsync(
+        DateTime runDateUtc,
+        string? companyName,
+        int? productId,
+        CancellationToken cancellationToken)
     {
         var fromUtc = runDateUtc.Date;
         var toUtc = fromUtc.AddDays(1);
-        return tenantDb.BatchLogs.AnyAsync(x => x.RunDate >= fromUtc && x.RunDate < toUtc, cancellationToken);
+        var query = tenantDb.BatchLogs.Where(x => x.RunDate >= fromUtc && x.RunDate < toUtc);
+
+        if (!string.IsNullOrWhiteSpace(companyName))
+        {
+            var normalizedCompany = companyName.Trim();
+            query = query.Where(x => x.CompanyName != null && EF.Functions.ILike(x.CompanyName, normalizedCompany));
+        }
+
+        if (productId.HasValue)
+        {
+            query = query.Where(x => x.ProductId == productId.Value);
+        }
+
+        return query.AnyAsync(cancellationToken);
     }
 
-    public async Task<CampaignBatchType?> GetLastCompletedDailyBatchTypeAsync(CancellationToken cancellationToken)
+    public Task<bool> HasBatchRunOnDateForScopeAndTypeAsync(
+        DateTime runDateUtc,
+        string? companyName,
+        int? productId,
+        CampaignBatchType batchType,
+        BatchRunSource? runSource,
+        CancellationToken cancellationToken)
     {
-        return await tenantDb.BatchLogs
+        var fromUtc = runDateUtc.Date;
+        var toUtc = fromUtc.AddDays(1);
+        var query = tenantDb.BatchLogs.Where(x =>
+            x.RunDate >= fromUtc
+            && x.RunDate < toUtc
+            && x.BatchType == batchType);
+
+        if (runSource.HasValue)
+        {
+            query = query.Where(x => x.RunSource == runSource.Value);
+        }
+
+        if (!string.IsNullOrWhiteSpace(companyName))
+        {
+            var normalizedCompany = companyName.Trim();
+            query = query.Where(x => x.CompanyName != null && EF.Functions.ILike(x.CompanyName, normalizedCompany));
+        }
+
+        if (productId.HasValue)
+        {
+            query = query.Where(x => x.ProductId == productId.Value);
+        }
+
+        return query.AnyAsync(cancellationToken);
+    }
+
+    public Task<CampaignBatchType?> GetLastCompletedDailyBatchTypeAsync(CancellationToken cancellationToken)
+        => GetLastCompletedDailyBatchTypeForScopeAsync(companyName: null, productId: null, cancellationToken);
+
+    public async Task<CampaignBatchType?> GetLastCompletedDailyBatchTypeForScopeAsync(
+        string? companyName,
+        int? productId,
+        CancellationToken cancellationToken)
+    {
+        var query = tenantDb.BatchLogs.AsNoTracking().AsQueryable();
+
+        if (!string.IsNullOrWhiteSpace(companyName))
+        {
+            var normalizedCompany = companyName.Trim();
+            query = query.Where(x => x.CompanyName != null && EF.Functions.ILike(x.CompanyName, normalizedCompany));
+        }
+
+        if (productId.HasValue)
+        {
+            query = query.Where(x => x.ProductId == productId.Value);
+        }
+
+        return await query
             .OrderByDescending(x => x.RunDate)
             .Select(x => (CampaignBatchType?)x.BatchType)
+            .FirstOrDefaultAsync(cancellationToken);
+    }
+
+    public async Task<DateTime?> GetLastBatchRunUtcForScopeAsync(
+        string companyName,
+        int productId,
+        CancellationToken cancellationToken)
+    {
+        var normalizedCompany = companyName.Trim();
+        return await tenantDb.BatchLogs
+            .AsNoTracking()
+            .Where(x =>
+                x.ProductId == productId
+                && x.CompanyName != null
+                && EF.Functions.ILike(x.CompanyName, normalizedCompany))
+            .OrderByDescending(x => x.RunDate)
+            .Select(x => (DateTime?)x.RunDate)
+            .FirstOrDefaultAsync(cancellationToken);
+    }
+
+    public async Task<DateTime?> GetLastBatchRunUtcForScopeAndTypeAsync(
+        string companyName,
+        int productId,
+        CampaignBatchType batchType,
+        BatchRunSource? runSource,
+        CancellationToken cancellationToken)
+    {
+        var normalizedCompany = companyName.Trim();
+        var query = tenantDb.BatchLogs
+            .AsNoTracking()
+            .Where(x =>
+                x.BatchType == batchType
+                && x.ProductId == productId
+                && x.CompanyName != null
+                && EF.Functions.ILike(x.CompanyName, normalizedCompany));
+
+        if (runSource.HasValue)
+        {
+            query = query.Where(x => x.RunSource == runSource.Value);
+        }
+
+        return await query
+            .OrderByDescending(x => x.RunDate)
+            .Select(x => (DateTime?)x.RunDate)
             .FirstOrDefaultAsync(cancellationToken);
     }
 
@@ -284,13 +401,24 @@ public class BatchRepository(
         return batchLog;
     }
 
-    public Task<List<BatchLog>> GetRecentBatchLogsAsync(int take, string? companyName, int? productId, CancellationToken cancellationToken)
+    public Task<List<BatchLog>> GetRecentBatchLogsAsync(
+        int take,
+        string? companyName,
+        int? productId,
+        DateTime? sinceUtc,
+        CancellationToken cancellationToken)
     {
         take = Math.Clamp(take, 1, 500);
         var query = tenantDb.BatchLogs.AsNoTracking();
+        if (sinceUtc.HasValue)
+        {
+            query = query.Where(x => x.RunDate >= sinceUtc.Value);
+        }
+
         if (!string.IsNullOrWhiteSpace(companyName))
         {
-            query = query.Where(x => x.CompanyName == companyName);
+            var normalizedCompany = companyName.Trim();
+            query = query.Where(x => x.CompanyName != null && EF.Functions.ILike(x.CompanyName, normalizedCompany));
         }
 
         if (productId.HasValue)
@@ -300,7 +428,8 @@ public class BatchRepository(
         }
 
         return query
-            .OrderByDescending(x => x.BatchId)
+            .OrderByDescending(x => x.RunDate)
+            .ThenByDescending(x => x.BatchId)
             .Take(take)
             .ToListAsync(cancellationToken);
     }

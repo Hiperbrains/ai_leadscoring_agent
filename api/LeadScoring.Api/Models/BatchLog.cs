@@ -17,4 +17,8 @@ public class BatchLog
     /// before the global product navbar shipped (they will display "&mdash;" in the UI).
     /// </summary>
     public int? ProductId { get; set; }
+  /// <summary>Whether this row came from the background scheduler or a manual UI run.</summary>
+  public BatchRunSource RunSource { get; set; } = BatchRunSource.Automatic;
+  /// <summary>True when at least one template mirror email was sent to admin recipients.</summary>
+  public bool AdminMirrorSent { get; set; }
 }

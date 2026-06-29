@@ -948,6 +948,24 @@
   color: var(--color-text-muted);
 }
 
+.batch-automation-status {
+  margin-bottom: 1rem;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  border: 1px solid #f0c9c9;
+  background: #fff8f8;
+}
+
+.batch-automation-status--active {
+  border-color: #b9dfc4;
+  background: #f4fbf6;
+}
+
+.batch-automation-status__line {
+  margin: 0 0 0.25rem;
+  font-weight: 600;
+}
+
 .manual-batch-recipient-panel {
   margin-top: var(--space-6);
 }
@@ -965,6 +983,46 @@
 
 .manual-batch-summary--busy {
   opacity: 0.78;
+}
+
+.batch-schedule-table {
+  width: 100%;
+}
+
+.batch-schedule-table th,
+.batch-schedule-table td {
+  vertical-align: middle;
+}
+
+.batch-schedule-table .batch-schedule-time-input {
+  min-width: 8.5rem;
+}
+
+.batch-schedule-grid {
+  gap: var(--space-4);
+}
+
+.batch-schedule-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-base);
+  color: var(--color-text-body);
+}
+
+.batch-schedule-time-input {
+  height: var(--control-height-input);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font: inherit;
+  color: var(--color-text-body);
+  background: var(--color-bg-card);
+}
+
+.batch-schedule-meta {
+  display: grid;
+  gap: var(--space-2);
 }
 
 .manual-batch-footer-actions {
