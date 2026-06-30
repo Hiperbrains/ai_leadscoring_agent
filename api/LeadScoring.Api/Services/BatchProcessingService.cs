@@ -93,7 +93,7 @@ public class BatchProcessingService(
         int? productId,
         CancellationToken cancellationToken)
     {
-        var leads = await GetLeadsForBatchTypeAsync(batchType, runDateUtc, cancellationToken);
+        var leads = await GetLeadsForAutomaticBatchTypeAsync(batchType, runDateUtc, cancellationToken);
         var cycleStartUtc = runDateUtc.Date.AddDays(-3);
         var marker = $"DailySequence_{batchType}_Sent";
 
@@ -127,7 +127,13 @@ public class BatchProcessingService(
             processed++;
             stageCounts[MapStage(lead.Stage)]++;
 
-            var sendResult = await ProcessLeadForBatchAsync(lead, batchType, marker, sentSamples, cancellationToken);
+            var sendResult = await ProcessLeadForBatchAsync(
+                lead,
+                batchType,
+                marker,
+                sentSamples,
+                useAutomaticTemplateRules: true,
+                cancellationToken);
             if (sendResult.Success)
             {
                 success++;
@@ -184,7 +190,7 @@ public class BatchProcessingService(
     {
         var nowUtc = DateTime.UtcNow;
         // Sequential: eligible query and aggregates share one scoped DbContext.
-        var eligibleLeads = await GetLeadsForBatchTypeAsync(batchType, nowUtc, cancellationToken).ConfigureAwait(false);
+        var eligibleLeads = await GetLeadsForManualBatchTypeAsync(batchType, nowUtc, cancellationToken).ConfigureAwait(false);
         var agg = await batchRepository.GetLeadAggregatesForPreviewAsync(nowUtc, cancellationToken).ConfigureAwait(false);
         var companyName = await tenantLeadScope.ResolveCompanyNameAsync(cancellationToken).ConfigureAwait(false);
 
@@ -207,7 +213,7 @@ public class BatchProcessingService(
     public async Task<BatchManualRunResultDto> RunManualAsync(CampaignBatchType batchType, string? scope, int? maxLeads, CancellationToken cancellationToken)
     {
         var nowUtc = DateTime.UtcNow;
-        var eligibleLeads = await GetLeadsForBatchTypeAsync(batchType, nowUtc, cancellationToken);
+        var eligibleLeads = await GetLeadsForManualBatchTypeAsync(batchType, nowUtc, cancellationToken);
         var allLeads = await batchRepository.GetAllLeadsForPreviewAsync(cancellationToken);
         var filtered = await FilterManualLeadsByScopeAsync(eligibleLeads, allLeads, scope, nowUtc, cancellationToken);
         var leads = ApplyManualMaxLeads(filtered, maxLeads);
@@ -291,7 +297,7 @@ public class BatchProcessingService(
         var nowUtc = DateTime.UtcNow;
         var normalizedScope = string.IsNullOrWhiteSpace(scope) ? "TotalEligible" : scope.Trim();
         var normalizedMaxLeads = NormalizeManualMaxLeads(maxLeads);
-        var eligibleLeads = await GetLeadsForBatchTypeAsync(batchType, nowUtc, cancellationToken);
+        var eligibleLeads = await GetLeadsForManualBatchTypeAsync(batchType, nowUtc, cancellationToken);
         var allLeads = await batchRepository.GetAllLeadsForPreviewAsync(cancellationToken);
         var filtered = await FilterManualLeadsByScopeAsync(eligibleLeads, allLeads, normalizedScope, nowUtc, cancellationToken);
         var leads = ApplyManualMaxLeads(filtered, normalizedMaxLeads);
@@ -439,7 +445,7 @@ public class BatchProcessingService(
     public async Task<BatchManualRunResultDto> RunManualTrackedAsync(Guid jobId, CampaignBatchType batchType, string? scope, int? maxLeads, CancellationToken cancellationToken)
     {
         var nowUtc = DateTime.UtcNow;
-        var eligibleLeads = await GetLeadsForBatchTypeAsync(batchType, nowUtc, cancellationToken);
+        var eligibleLeads = await GetLeadsForManualBatchTypeAsync(batchType, nowUtc, cancellationToken);
         var allLeads = await batchRepository.GetAllLeadsForPreviewAsync(cancellationToken);
         var filtered = await FilterManualLeadsByScopeAsync(eligibleLeads, allLeads, scope, nowUtc, cancellationToken);
         var leads = ApplyManualMaxLeads(filtered, maxLeads);
@@ -536,7 +542,14 @@ public class BatchProcessingService(
             return (false, "Lead not found.");
         }
 
-        return await ProcessLeadForBatchAsync(scopedRepository, lead, batchType, marker, sentSamples, cancellationToken);
+        return await ProcessLeadForBatchAsync(
+            scopedRepository,
+            lead,
+            batchType,
+            marker,
+            sentSamples,
+            useAutomaticTemplateRules: false,
+            cancellationToken);
     }
 
     private async Task<List<Lead>> FilterManualLeadsByScopeAsync(
@@ -674,7 +687,13 @@ public class BatchProcessingService(
             }
             else
             {
-                var result = await ProcessLeadForBatchAsync(lead, CampaignBatchType.Day3, "RetryBatchSent", sentSamples, cancellationToken);
+                var result = await ProcessLeadForBatchAsync(
+                    lead,
+                    CampaignBatchType.Day3,
+                    "RetryBatchSent",
+                    sentSamples,
+                    useAutomaticTemplateRules: false,
+                    cancellationToken);
                 batchLead.Status = result.Success ? BatchLeadStatus.Success : BatchLeadStatus.Failed;
                 batchLead.ErrorMessage = result.Success ? null : (result.FailureReason ?? "Retry failed.");
                 if (result.Success)
@@ -711,8 +730,16 @@ public class BatchProcessingService(
         CampaignBatchType batchType,
         string marker,
         ConcurrentDictionary<int, SentEmailSample> sentSamples,
+        bool useAutomaticTemplateRules,
         CancellationToken cancellationToken)
-        => await ProcessLeadForBatchAsync(batchRepository, lead, batchType, marker, sentSamples, cancellationToken);
+        => await ProcessLeadForBatchAsync(
+            batchRepository,
+            lead,
+            batchType,
+            marker,
+            sentSamples,
+            useAutomaticTemplateRules,
+            cancellationToken);
 
     private async Task<(bool Success, string? FailureReason)> ProcessLeadForBatchAsync(
         IBatchRepository repository,
@@ -720,16 +747,20 @@ public class BatchProcessingService(
         CampaignBatchType batchType,
         string marker,
         ConcurrentDictionary<int, SentEmailSample> sentSamples,
+        bool useAutomaticTemplateRules,
         CancellationToken cancellationToken)
     {
-        var template = await repository.GetTemplateByBatchTypeAsync(batchType, lead, cancellationToken);
+        var effectiveBatchType = useAutomaticTemplateRules
+            ? ResolveEffectiveBatchType(lead, batchType)
+            : batchType;
+        var template = await repository.GetTemplateByBatchTypeAsync(effectiveBatchType, lead, cancellationToken);
         if (template is null)
         {
-            return (false, $"No active email template found for {batchType} (company={lead.CompanyName ?? "n/a"}, product={lead.ProductId}).");
+            return (false, $"No active email template found for {effectiveBatchType} (company={lead.CompanyName ?? "n/a"}, product={lead.ProductId}).");
         }
 
-        var eventName = $"batch_{batchType.ToString().ToLowerInvariant()}";
-        var resolvedBody = ComposeBatchEmailHtml(template, lead, batchType, useTrackedCta: true);
+        var eventName = $"batch_{effectiveBatchType.ToString().ToLowerInvariant()}";
+        var resolvedBody = ComposeBatchEmailHtml(template, lead, effectiveBatchType, useTrackedCta: true);
 
         var sent = await SendWithRetryAsync(lead.Email, template.Subject, resolvedBody, template.IsFollowUp, cancellationToken);
         if (!sent)
@@ -748,7 +779,7 @@ public class BatchProcessingService(
         {
             lead.WelcomeEmailSent = true;
         }
-        else if (SetsReengagementNextSendQuietWindow(batchType))
+        else if (SetsReengagementNextSendQuietWindow(effectiveBatchType))
         {
             lead.NextEmailSendDateUtc = sentAtUtc.AddDays(7);
         }
@@ -760,7 +791,7 @@ public class BatchProcessingService(
             Type = EventType.WebsiteActivity,
             Source = EventSource.Email,
             TimestampUtc = sentAtUtc,
-            MetadataJson = $$"""{"eventName":"{{eventName}}","batchType":"{{batchType}}","systemMarker":"{{marker}}"}"""
+            MetadataJson = $$"""{"eventName":"{{eventName}}","batchType":"{{effectiveBatchType}}","systemMarker":"{{marker}}"}"""
         }, cancellationToken);
 
         await repository.SaveChangesAsync(cancellationToken);
@@ -1172,7 +1203,10 @@ public class BatchProcessingService(
         }
     }
 
-    private async Task<List<Lead>> GetLeadsForBatchTypeAsync(CampaignBatchType batchType, DateTime runDateUtc, CancellationToken cancellationToken)
+    private async Task<List<Lead>> GetLeadsForAutomaticBatchTypeAsync(
+        CampaignBatchType batchType,
+        DateTime runDateUtc,
+        CancellationToken cancellationToken)
     {
         return batchType switch
         {
@@ -1180,13 +1214,80 @@ public class BatchProcessingService(
             CampaignBatchType.Day2 => await batchRepository.GetDay2LeadsAsync(runDateUtc, cancellationToken),
             CampaignBatchType.Day3 => await batchRepository.GetDay3LeadsAsync(runDateUtc, cancellationToken),
             CampaignBatchType.Day4 => await batchRepository.GetDay4LeadsAsync(runDateUtc, cancellationToken),
-            CampaignBatchType.Warm => await batchRepository.GetDay3LeadsForStageAsync(LeadStage.Warm, runDateUtc, cancellationToken),
-            CampaignBatchType.Mql => await batchRepository.GetDay3LeadsForStageAsync(LeadStage.Mql, runDateUtc, cancellationToken),
-            CampaignBatchType.Hot => await batchRepository.GetDay3LeadsForStageAsync(LeadStage.Hot, runDateUtc, cancellationToken),
+            CampaignBatchType.Warm => await batchRepository.GetLeadsForStageBatchAsync(LeadStage.Warm, runDateUtc, cancellationToken),
+            CampaignBatchType.Mql => await batchRepository.GetLeadsForStageBatchAsync(LeadStage.Mql, runDateUtc, cancellationToken),
+            CampaignBatchType.Hot => await batchRepository.GetLeadsForStageBatchAsync(LeadStage.Hot, runDateUtc, cancellationToken),
             CampaignBatchType.WarmFollowUp => await batchRepository.GetDay4LeadsForStageAsync(LeadStage.Warm, runDateUtc, cancellationToken),
             CampaignBatchType.MqlFollowUp => await batchRepository.GetDay4LeadsForStageAsync(LeadStage.Mql, runDateUtc, cancellationToken),
             CampaignBatchType.HotFollowUp => await batchRepository.GetDay4LeadsForStageAsync(LeadStage.Hot, runDateUtc, cancellationToken),
             _ => []
+        };
+    }
+
+    private async Task<List<Lead>> GetLeadsForManualBatchTypeAsync(
+        CampaignBatchType batchType,
+        DateTime runDateUtc,
+        CancellationToken cancellationToken)
+    {
+        return batchType switch
+        {
+            CampaignBatchType.Day1 => await batchRepository.GetDay1LeadsAsync(runDateUtc, cancellationToken),
+            CampaignBatchType.Day2 => await batchRepository.GetDay2LeadsForManualAsync(runDateUtc, cancellationToken),
+            CampaignBatchType.Day3 => await MergeManualStageLeadsAsync(
+                [LeadStage.Warm, LeadStage.Mql, LeadStage.Hot],
+                runDateUtc,
+                followUp: false,
+                cancellationToken),
+            CampaignBatchType.Day4 => await MergeManualStageLeadsAsync(
+                [LeadStage.Mql, LeadStage.Hot],
+                runDateUtc,
+                followUp: true,
+                cancellationToken),
+            CampaignBatchType.Warm => await batchRepository.GetLeadsForManualStageAsync(LeadStage.Warm, runDateUtc, cancellationToken),
+            CampaignBatchType.Mql => await batchRepository.GetLeadsForManualStageAsync(LeadStage.Mql, runDateUtc, cancellationToken),
+            CampaignBatchType.Hot => await batchRepository.GetLeadsForManualStageAsync(LeadStage.Hot, runDateUtc, cancellationToken),
+            CampaignBatchType.WarmFollowUp => await batchRepository.GetLeadsForManualFollowUpStageAsync(LeadStage.Warm, runDateUtc, cancellationToken),
+            CampaignBatchType.MqlFollowUp => await batchRepository.GetLeadsForManualFollowUpStageAsync(LeadStage.Mql, runDateUtc, cancellationToken),
+            CampaignBatchType.HotFollowUp => await batchRepository.GetLeadsForManualFollowUpStageAsync(LeadStage.Hot, runDateUtc, cancellationToken),
+            _ => []
+        };
+    }
+
+    private async Task<List<Lead>> MergeManualStageLeadsAsync(
+        IReadOnlyList<LeadStage> stages,
+        DateTime runDateUtc,
+        bool followUp,
+        CancellationToken cancellationToken)
+    {
+        var merged = new List<Lead>();
+        foreach (var stage in stages)
+        {
+            var chunk = followUp
+                ? await batchRepository.GetLeadsForManualFollowUpStageAsync(stage, runDateUtc, cancellationToken).ConfigureAwait(false)
+                : await batchRepository.GetLeadsForManualStageAsync(stage, runDateUtc, cancellationToken).ConfigureAwait(false);
+            merged.AddRange(chunk);
+        }
+
+        return merged
+            .GroupBy(x => x.Id)
+            .Select(g => g.First())
+            .OrderBy(x => x.LastEmailSentDateUtc ?? x.CreatedAtUtc)
+            .ToList();
+    }
+
+    private static CampaignBatchType ResolveEffectiveBatchType(Lead lead, CampaignBatchType batchType)
+    {
+        if (!lead.LastEmailSentDateUtc.HasValue)
+        {
+            return batchType;
+        }
+
+        return batchType switch
+        {
+            CampaignBatchType.Warm => CampaignBatchType.WarmFollowUp,
+            CampaignBatchType.Mql => CampaignBatchType.MqlFollowUp,
+            CampaignBatchType.Hot => CampaignBatchType.HotFollowUp,
+            _ => batchType
         };
     }
 

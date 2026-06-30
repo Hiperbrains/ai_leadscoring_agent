@@ -29,6 +29,15 @@ public interface IBatchRepository
     Task<List<Lead>> GetDay3LeadsForStageAsync(LeadStage stage, DateTime runDateUtc, CancellationToken cancellationToken);
     Task<List<Lead>> GetDay4LeadsAsync(DateTime runDateUtc, CancellationToken cancellationToken);
     Task<List<Lead>> GetDay4LeadsForStageAsync(LeadStage stage, DateTime runDateUtc, CancellationToken cancellationToken);
+    Task<List<Lead>> GetLeadsForStageEmailAsync(
+        LeadStage stage,
+        DateTime runDateUtc,
+        bool requirePriorEmail,
+        CancellationToken cancellationToken);
+    Task<List<Lead>> GetLeadsForStageBatchAsync(LeadStage stage, DateTime runDateUtc, CancellationToken cancellationToken);
+    Task<List<Lead>> GetLeadsForManualStageAsync(LeadStage stage, DateTime runDateUtc, CancellationToken cancellationToken);
+    Task<List<Lead>> GetLeadsForManualFollowUpStageAsync(LeadStage stage, DateTime runDateUtc, CancellationToken cancellationToken);
+    Task<List<Lead>> GetDay2LeadsForManualAsync(DateTime runDateUtc, CancellationToken cancellationToken);
     Task<List<Lead>> GetAllLeadsForPreviewAsync(CancellationToken cancellationToken);
     Task<BatchPreviewLeadAggregates> GetLeadAggregatesForPreviewAsync(DateTime nowUtc, CancellationToken cancellationToken);
     Task<List<Lead>> GetLeadsDidNotOpenSinceLastEmailAsync(CancellationToken cancellationToken);

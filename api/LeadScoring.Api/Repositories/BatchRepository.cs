@@ -193,71 +193,137 @@ public class BatchRepository(
 
     public async Task<List<Lead>> GetDay2LeadsAsync(DateTime runDateUtc, CancellationToken cancellationToken)
     {
+        return await GetLeadsForStageEmailAsync(LeadStage.Cold, runDateUtc, requirePriorEmail: true, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<List<Lead>> GetDay3LeadsAsync(DateTime runDateUtc, CancellationToken cancellationToken)
+    {
+        var warm = await GetLeadsForStageEmailAsync(LeadStage.Warm, runDateUtc, requirePriorEmail: false, cancellationToken)
+            .ConfigureAwait(false);
+        var mql = await GetLeadsForStageEmailAsync(LeadStage.Mql, runDateUtc, requirePriorEmail: false, cancellationToken)
+            .ConfigureAwait(false);
+        var hot = await GetLeadsForStageEmailAsync(LeadStage.Hot, runDateUtc, requirePriorEmail: false, cancellationToken)
+            .ConfigureAwait(false);
+        return warm.Concat(mql).Concat(hot).GroupBy(x => x.Id).Select(g => g.First()).ToList();
+    }
+
+    public async Task<List<Lead>> GetDay4LeadsAsync(DateTime runDateUtc, CancellationToken cancellationToken)
+    {
+        var warm = await GetLeadsForStageEmailAsync(LeadStage.Warm, runDateUtc, requirePriorEmail: true, cancellationToken)
+            .ConfigureAwait(false);
+        var mql = await GetLeadsForStageEmailAsync(LeadStage.Mql, runDateUtc, requirePriorEmail: true, cancellationToken)
+            .ConfigureAwait(false);
+        var hot = await GetLeadsForStageEmailAsync(LeadStage.Hot, runDateUtc, requirePriorEmail: true, cancellationToken)
+            .ConfigureAwait(false);
+        return warm.Concat(mql).Concat(hot).GroupBy(x => x.Id).Select(g => g.First()).ToList();
+    }
+
+    public Task<List<Lead>> GetDay3LeadsForStageAsync(LeadStage stage, DateTime runDateUtc, CancellationToken cancellationToken)
+        => GetLeadsForStageEmailAsync(stage, runDateUtc, requirePriorEmail: false, cancellationToken);
+
+    public Task<List<Lead>> GetDay4LeadsForStageAsync(LeadStage stage, DateTime runDateUtc, CancellationToken cancellationToken)
+        => GetLeadsForStageEmailAsync(stage, runDateUtc, requirePriorEmail: true, cancellationToken);
+
+    public async Task<List<Lead>> GetLeadsForStageEmailAsync(
+        LeadStage stage,
+        DateTime runDateUtc,
+        bool requirePriorEmail,
+        CancellationToken cancellationToken)
+    {
+        var noOpenSinceUtc = runDateUtc.AddDays(-2);
+        var baseLeads = (await AccessibleLeadsAsync(cancellationToken).ConfigureAwait(false)).AsNoTracking();
+
+        if (!requirePriorEmail)
+        {
+            return await baseLeads
+                .Where(x =>
+                    x.Stage == stage &&
+                    x.Stage != LeadStage.Cold &&
+                    x.LastEmailSentDateUtc == null &&
+                    (x.NextEmailSendDateUtc == null || x.NextEmailSendDateUtc <= runDateUtc))
+                .OrderBy(x => x.CreatedAtUtc)
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        var query = ApplyDidNotOpenSinceLastEmailFilter(
+            baseLeads.Where(x =>
+                x.Stage == stage &&
+                (stage != LeadStage.Cold || x.WelcomeEmailSent) &&
+                x.LastEmailSentDateUtc.HasValue &&
+                x.LastEmailSentDateUtc <= noOpenSinceUtc &&
+                (x.NextEmailSendDateUtc == null || x.NextEmailSendDateUtc <= runDateUtc)));
+
+        return await query
+            .OrderBy(x => x.LastEmailSentDateUtc)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<List<Lead>> GetLeadsForStageBatchAsync(
+        LeadStage stage,
+        DateTime runDateUtc,
+        CancellationToken cancellationToken)
+    {
+        var initial = await GetLeadsForStageEmailAsync(stage, runDateUtc, requirePriorEmail: false, cancellationToken)
+            .ConfigureAwait(false);
+        var followUp = await GetLeadsForStageEmailAsync(stage, runDateUtc, requirePriorEmail: true, cancellationToken)
+            .ConfigureAwait(false);
+        return initial
+            .Concat(followUp)
+            .GroupBy(x => x.Id)
+            .Select(g => g.First())
+            .OrderBy(x => x.LastEmailSentDateUtc ?? x.CreatedAtUtc)
+            .ToList();
+    }
+
+    public async Task<List<Lead>> GetLeadsForManualStageAsync(
+        LeadStage stage,
+        DateTime runDateUtc,
+        CancellationToken cancellationToken)
+    {
+        var baseLeads = (await AccessibleLeadsAsync(cancellationToken).ConfigureAwait(false)).AsNoTracking();
+        return await baseLeads
+            .Where(x =>
+                x.Stage == stage &&
+                (x.NextEmailSendDateUtc == null || x.NextEmailSendDateUtc <= runDateUtc))
+            .OrderBy(x => x.LastEmailSentDateUtc ?? x.CreatedAtUtc)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<List<Lead>> GetLeadsForManualFollowUpStageAsync(
+        LeadStage stage,
+        DateTime runDateUtc,
+        CancellationToken cancellationToken)
+    {
+        var baseLeads = (await AccessibleLeadsAsync(cancellationToken).ConfigureAwait(false)).AsNoTracking();
+        var query = ApplyDidNotOpenSinceLastEmailFilter(
+            baseLeads.Where(x =>
+                x.Stage == stage &&
+                x.LastEmailSentDateUtc.HasValue &&
+                (x.NextEmailSendDateUtc == null || x.NextEmailSendDateUtc <= runDateUtc)));
+
+        return await query
+            .OrderBy(x => x.LastEmailSentDateUtc)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<List<Lead>> GetDay2LeadsForManualAsync(DateTime runDateUtc, CancellationToken cancellationToken)
+    {
         var inactivityThresholdUtc = runDateUtc.AddDays(-2);
         return await (await AccessibleLeadsAsync(cancellationToken).ConfigureAwait(false))
             .Where(x =>
+                x.Stage == LeadStage.Cold &&
                 x.WelcomeEmailSent &&
                 x.LastActivityUtc <= inactivityThresholdUtc &&
                 (x.LastEmailSentDateUtc == null || x.LastEmailSentDateUtc <= inactivityThresholdUtc) &&
                 (x.NextEmailSendDateUtc == null || x.NextEmailSendDateUtc <= runDateUtc))
             .OrderBy(x => x.LastActivityUtc)
-            .ToListAsync(cancellationToken).ConfigureAwait(false);
-    }
-
-    public async Task<List<Lead>> GetDay3LeadsAsync(DateTime runDateUtc, CancellationToken cancellationToken)
-    {
-        var fromUtc = runDateUtc.Date;
-        var toUtc = fromUtc.AddDays(1);
-        return await (await AccessibleLeadsAsync(cancellationToken).ConfigureAwait(false))
-            .Where(x =>
-                ((x.CreatedAtUtc >= fromUtc && x.CreatedAtUtc < toUtc) ||
-                 x.Stage == LeadStage.Mql ||
-                 x.Stage == LeadStage.Hot) &&
-                (x.LastEmailSentDateUtc == null || x.LastEmailSentDateUtc < fromUtc) &&
-                (x.NextEmailSendDateUtc == null || x.NextEmailSendDateUtc <= runDateUtc))
-            .OrderBy(x => x.LastEmailSentDateUtc ?? x.CreatedAtUtc)
-            .ToListAsync(cancellationToken).ConfigureAwait(false);
-    }
-
-    public async Task<List<Lead>> GetDay4LeadsAsync(DateTime runDateUtc, CancellationToken cancellationToken)
-    {
-        var thresholdUtc = runDateUtc.AddDays(-4);
-        return await (await AccessibleLeadsAsync(cancellationToken).ConfigureAwait(false))
-            .Where(x =>
-                x.LastEmailSentDateUtc.HasValue &&
-                x.LastEmailSentDateUtc <= thresholdUtc &&
-                (x.NextEmailSendDateUtc == null || x.NextEmailSendDateUtc <= runDateUtc))
-            .OrderBy(x => x.LastEmailSentDateUtc)
-            .ToListAsync(cancellationToken).ConfigureAwait(false);
-    }
-
-    public async Task<List<Lead>> GetDay3LeadsForStageAsync(LeadStage stage, DateTime runDateUtc, CancellationToken cancellationToken)
-    {
-        var fromUtc = runDateUtc.Date;
-        var toUtc = fromUtc.AddDays(1);
-        return await (await AccessibleLeadsAsync(cancellationToken).ConfigureAwait(false))
-            .Where(x =>
-                x.Stage == stage &&
-                ((x.CreatedAtUtc >= fromUtc && x.CreatedAtUtc < toUtc) ||
-                 x.Stage == LeadStage.Mql ||
-                 x.Stage == LeadStage.Hot) &&
-                (x.LastEmailSentDateUtc == null || x.LastEmailSentDateUtc < fromUtc) &&
-                (x.NextEmailSendDateUtc == null || x.NextEmailSendDateUtc <= runDateUtc))
-            .OrderBy(x => x.LastEmailSentDateUtc ?? x.CreatedAtUtc)
-            .ToListAsync(cancellationToken).ConfigureAwait(false);
-    }
-
-    public async Task<List<Lead>> GetDay4LeadsForStageAsync(LeadStage stage, DateTime runDateUtc, CancellationToken cancellationToken)
-    {
-        var thresholdUtc = runDateUtc.AddDays(-4);
-        return await (await AccessibleLeadsAsync(cancellationToken).ConfigureAwait(false))
-            .Where(x =>
-                x.Stage == stage &&
-                x.LastEmailSentDateUtc.HasValue &&
-                x.LastEmailSentDateUtc <= thresholdUtc &&
-                (x.NextEmailSendDateUtc == null || x.NextEmailSendDateUtc <= runDateUtc))
-            .OrderBy(x => x.LastEmailSentDateUtc)
-            .ToListAsync(cancellationToken).ConfigureAwait(false);
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
     }
 
     public async Task<List<Lead>> GetAllLeadsForPreviewAsync(CancellationToken cancellationToken)

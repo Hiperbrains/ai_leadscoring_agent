@@ -14,6 +14,7 @@ public class BatchScheduleService(
     ITenantLeadScope tenantLeadScope,
     ITenantContext tenantContext,
     IBatchWorkerTelemetry workerTelemetry,
+    ManualBatchProgressStore manualBatchProgressStore,
     IConfiguration configuration,
     ILogger<BatchScheduleService> logger) : IBatchScheduleService
 {
@@ -138,6 +139,12 @@ public class BatchScheduleService(
 
     public async Task ProcessDueSchedulesAsync(CancellationToken cancellationToken)
     {
+        if (manualBatchProgressStore.HasRunningJob())
+        {
+            logger.LogInformation("Skipping automatic schedule check while a manual batch is running.");
+            return;
+        }
+
         var nowUtc = DateTime.UtcNow;
         var enabledSchedules = await db.BatchScheduleSettings
             .AsNoTracking()

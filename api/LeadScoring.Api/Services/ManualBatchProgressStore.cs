@@ -86,6 +86,8 @@ public class ManualBatchProgressStore
         jobs[jobId] = current with { IsRunning = false };
     }
 
+    public bool HasRunningJob() => jobs.Values.Any(x => x.IsRunning);
+
     public readonly record struct ManualBatchProgressState(
         Guid JobId,
         CampaignBatchType BatchType,
